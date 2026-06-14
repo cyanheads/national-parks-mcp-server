@@ -1,0 +1,38 @@
+{
+  "manifest_version": "0.3",
+  "name": "national-parks-mcp-server",
+  "version": "0.1.0",
+  "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API.",
+  "author": { "name": "Casey Hand" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyanheads/national-parks-mcp-server.git"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "MCP_AUTH_MODE": "none",
+        "NODE_ENV": "production",
+        "NPS_API_KEY": "${user_config.nps_api_key}"
+      }
+    }
+  },
+  "compatibility": {
+    "runtimes": { "node": ">=24.0.0" }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "user_config": {
+    "nps_api_key": {
+      "title": "NPS API Key",
+      "description": "NPS Data API key, sent as the X-Api-Key header. Free instant signup at https://www.nps.gov/subjects/developer/get-started.htm.",
+      "type": "string",
+      "required": true
+    }
+  }
+}
