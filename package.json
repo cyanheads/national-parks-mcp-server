@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/national-parks-mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API.",
   "mcpName": "io.github.cyanheads/national-parks-mcp-server",
   "type": "module",
@@ -89,6 +89,6 @@
     "ignore": "^7.0.5",
     "tsc-alias": "^1.8.17",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   }
 }
