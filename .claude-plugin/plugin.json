@@ -1,5 +1,5 @@
 {
-  "name": "@cyanheads/national-parks-mcp-server",
+  "name": "national-parks-mcp-server",
   "version": "0.1.1",
   "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API.",
   "author": {
@@ -9,7 +9,7 @@
   "repository": "https://github.com/cyanheads/national-parks-mcp-server",
   "license": "Apache-2.0",
   "mcpServers": {
-    "@cyanheads/national-parks-mcp-server": {
+    "national-parks-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/national-parks-mcp-server"],
       "env": {
