@@ -1,6 +1,6 @@
 {
   "name": "national-parks-mcp-server",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API.",
   "author": {
     "name": "Casey Hand",
