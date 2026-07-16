@@ -72,9 +72,9 @@ One service, init/accessor pattern (`initNpsService(config)` in `createApp().set
 
 | Method | Endpoint | Notes |
 |:-------|:---------|:------|
-| `findParks(params, ctx)` | `GET /parks` | `q`, `stateCode`, `limit`, `start`; activity filter applied locally (see Decisions Log §7) |
+| `findParks(params, ctx)` | `GET /parks` | `q`, `stateCode`, `limit`, `start`; activity filter applied locally over the full matched set (see Decisions Log §7) |
 | `getParks(parkCodes, fields, ctx)` | `GET /parks` | `parkCode` is comma-joined (array param) — **one batched call** for up to 10 codes, not N calls |
-| `getAlerts(params, ctx)` | `GET /alerts` | `parkCode`, `stateCode`, `q`, `limit`; category filtered locally |
+| `getAlerts(params, ctx)` | `GET /alerts` | `parkCode`, `stateCode`, `q`, `limit`, `start`; category filtered locally over the full matched set (see Decisions Log §4) |
 | `findCampgrounds(params, ctx)` | `GET /campgrounds` | `parkCode`, `stateCode`, `q`, `limit`, `start` |
 | `getThingsToDo(params, ctx)` | `GET /thingstodo` | `parkCode`, `stateCode`, `q`, `limit`, `start` (single-string params, not arrays — see Decisions Log §8) |
 | `findEvents(params, ctx)` | `GET /events` | `parkCode`, `stateCode`, `dateStart`, `dateEnd`, `q`, `pageSize`, `pageNumber` (different envelope — see §6) |
@@ -140,7 +140,7 @@ export function getServerConfig(): ServerConfig {
 
 **Purpose:** The entry point. Resolve a place name, state, or free-text query into NPS parks, returning `parkCode` (the spine) plus a compact trip-planning summary so the agent can pick a park and chain into the detail tools. US NPS sites only.
 
-**Endpoint:** `GET /parks` with `q`, `stateCode`, `limit`, `start`. (`activity` is filtered locally — see Decisions Log §7.)
+**Endpoint:** `GET /parks` with `q`, `stateCode`, `limit`, `start`. (`activity` is filtered locally over the full matched set — see Decisions Log §7.)
 
 ```ts
 input: z.object({
@@ -161,7 +161,7 @@ input: z.object({
     .string()
     .optional()
     .describe(
-      'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match applied locally after fetch. Use nps_get_park to see a park\'s full activity list.',
+      'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match applied locally (the API has no activity param) across every site matching query/stateCode, then paginated with start/limit — so totalCount is the true count of matching parks, not a per-page tally. Use nps_get_park to see a park\'s full activity list.',
     ),
   limit: z
     .number()
@@ -369,7 +369,7 @@ Partial resolution (some codes hit, some miss) is **not** an error — return wh
 
 **Purpose:** The time-sensitive headline tool. Current alerts for a park (or a whole state) — closures, hazards, caution, information — with **category and recency surfaced prominently** so "is anything closed at Glacier right now?" is answered at a glance. Returns most-recent-first.
 
-**Endpoint:** `GET /alerts` with `parkCode`, `stateCode`, `q`, `limit`. (`category` filtered locally — see Decisions Log §4.)
+**Endpoint:** `GET /alerts` with `parkCode`, `stateCode`, `q`, `limit`, `start`. (`category` filtered locally over the full matched set — see Decisions Log §4.)
 
 ```ts
 input: z.object({
@@ -386,7 +386,7 @@ input: z.object({
   category: z
     .enum(['Danger', 'Caution', 'Information', 'Park Closure'])
     .optional()
-    .describe('Filter to one alert category. "Danger" and "Park Closure" are the high-priority ones for trip safety. Omit to see all categories (the default — closures and hazards should not be missed). Live categories observed: Danger, Caution, Information, Park Closure.'),
+    .describe('Filter to one alert category. "Danger" and "Park Closure" are the high-priority ones for trip safety. Applied locally (the API has no category param) across every alert matching parkCode/stateCode/query, then paginated with start/limit — so totalCount is the true count of matching alerts, not a per-page tally. Omit to see all categories (the default — closures and hazards should not be missed). Live categories observed: Danger, Caution, Information, Park Closure.'),
   query: z
     .string()
     .optional()
@@ -398,6 +398,12 @@ input: z.object({
     .max(50)
     .default(20)
     .describe('Maximum alerts to return (1–50), most-recent first.'),
+  start: z
+    .number()
+    .int()
+    .min(0)
+    .default(0)
+    .describe('Zero-based offset for pagination within the matched set. Use with limit to page through results — when totalCount exceeds what was returned, re-request with start advanced by limit.'),
 }),
 ```
 
@@ -417,7 +423,7 @@ output: z.object({
         lastIndexedDate: z.string().nullable().describe('When NPS last updated/indexed this alert, or null. Format from the API is "YYYY-MM-DD 00:00:00.0" (space-delimited, with fractional seconds suffix) — service may strip to "YYYY-MM-DD" for readability. The recency signal — a stale date may mean the condition has changed; verify against the park page.'),
       }),
     )
-    .describe('Current alerts, sorted most-recent first by lastIndexedDate. An empty array means no active alerts — good news, not an error.'),
+    .describe('Current alerts, sorted most-recent first by lastIndexedDate. An empty array with totalCount 0 means no active alerts — good news, not an error; with a non-zero totalCount it means start paged past the end of the matches. The notice says which.'),
 }),
 ```
 
@@ -430,7 +436,7 @@ enrichment: {
   cap: z.number().optional().describe('Limit applied (populated when results were truncated).'),
   categoryBreakdown: z.string().describe('Count of returned alerts per category (e.g. "Closure: 3, Caution: 1, Information: 2") — lets the agent gauge severity without scanning every alert.'),
   appliedFilters: z.string().describe('Echo of parkCode/stateCode/category/query as applied.'),
-  notice: z.string().optional().describe('Message when there are no active alerts — explicitly states this is good news (the park reports nothing closed/hazardous right now).'),
+  notice: z.string().optional().describe('Message when the page is empty — states which case it is: good news (totalCount 0, the park reports nothing closed/hazardous right now) or a paging artifact (start ran past the end of a non-empty matched set).'),
 },
 enrichmentTrailer: {
   totalCount: { label: 'Total Alerts' },
@@ -440,8 +446,9 @@ enrichmentTrailer: {
   appliedFilters: { label: 'Filters' },
 },
 ```
-- Sort by `lastIndexedDate` desc in the handler before capping (the API does not guarantee order).
-- Empty → `ctx.enrich.notice("No active alerts for <filters>. The park currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.")`.
+- Sort by `lastIndexedDate` desc in the handler before filtering/slicing (the API does not guarantee order). That sort is the tool's single ordering contract — `format()` renders the handler's order as-is.
+- Empty page, branching on `total` — `total === 0` → `ctx.enrich.notice("No active alerts for <filters>. The park currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.")`; `total > 0` → a paging-artifact notice naming `start=0` as the way back. `format()` asserts neither (it never sees `totalCount`) and points at the notice instead.
+- `ctx.enrich.truncated()` writes a `notice` internally (last-wins), so the handler collects every notice fragment (best-effort-scan caveat, empty-result guidance, next-page pointer) and emits exactly one — via `truncated({ guidance })` when a page follows, else `notice()`.
 
 **Errors:**
 
@@ -452,7 +459,7 @@ enrichmentTrailer: {
 
 Empty results are never an error.
 
-**`format()`:** `## N active alerts` (or "No active alerts — nothing currently closed or hazardous"). Group/sort by category with Danger/Park Closure first; per alert — `### [{category}] {title}` · `**Park:** {parkCode} | **Updated:** {lastIndexedDate}` · description · `[Details]({url})` when present (url is null when empty). Category and recency lead every entry.
+**`format()`:** `## N active alerts` (or "No alerts in this response. See the notice for what this means." — `format()` receives only the domain payload, never `totalCount`, so it defers the all-clear-vs-paging-artifact call to the notice instead of guessing). Renders `alerts` in the handler's order (most-recent-first) — **no re-sort**, so `content[]` and `structuredContent` clients read the same order; per alert — `### [{category}] {title}` · `**Park:** {parkCode} | **Updated:** {lastIndexedDate}` · description · `[Details]({url})` when present (url is null when empty). Category and recency lead every entry, so severity stays scannable without reordering the list.
 
 ---
 
@@ -735,7 +742,7 @@ No single tool makes ≥3 upstream calls — this is a flat multi-endpoint surfa
 - **Event feed is sparse and inconsistent.** Many parks list few or no events; the `/events` envelope and field names differ from the rest of the API. Notices set the expectation.
 - **Records are large and free-text-heavy.** Hours, fees, amenities, and accessibility are human-authored strings, not structured enums. The server normalizes the high-value bits (amenity booleans, fee dollar-strings, reservable counts) and links the NPS page for the rest, rather than dumping raw nested objects.
 - **No coordinates on some records.** Lat/lon is nullable throughout — the server never fabricates a center point; downstream weather lookups must handle a null gracefully.
-- **`activity` filter on `nps_find_parks` is local, not upstream.** `/parks` has no activity query param, so the filter is applied after fetch over the returned page — it narrows what was fetched, it does not search all 470 sites by activity. Documented on the field.
+- **Local filters cost a full-corpus fetch.** `nps_find_parks.activity` and `nps_get_alerts.category` have no upstream param, so a filtered call pulls the whole set matched by the other filters (worst case ~3.9 MB / ~2 s for an unnarrowed `/parks`; `stateCode`/`query` narrow it upstream first — `stateCode=CA` drops it to ~320 KB). Correctness over latency: the alternative silently hides matches. If a corpus ever outgrows the fetch limit, the response says so rather than implying exhaustiveness (see Decisions Log §7).
 
 ---
 
@@ -750,6 +757,8 @@ No single tool makes ≥3 upstream calls — this is a flat multi-endpoint surfa
 | **Envelope (`/events`)** | `{ total, errors: [...], data: [...], pagenumber, pagesize }` — different shape; normalize. Note: `dates` is NOT a top-level envelope field; it lives inside each event record as an array of all occurrence dates. |
 | **Array params** | `parkCode`, `stateCode` are **array** params on `/parks`, `/alerts`, `/campgrounds`, `/events` — comma-join for a single multi-target request. `/thingstodo` takes **single-string** `parkCode`/`stateCode`. |
 | **Pagination** | `start` (0-based offset) + `limit` on most endpoints; `/events` uses `pageNumber` (1-based) + `pageSize`. |
+| **`limit` ceiling** | **None enforced** — the API returns `min(limit, total)` (verified 2026-07-15: `/thingstodo?limit=2000` → 2000 of 3561). `/parks?limit=1000` returns all 474 and `/alerts?limit=1000` all 651, so either corpus is one request away. |
+| **Unsupported params** | **Silently ignored, never rejected** — `/parks?activity=…` and `/alerts?category=…` return results identical to the call without them. An unsupported filter cannot be detected from the response; it must be applied locally (Decisions Log §7). |
 | **Error shape** | `{ "error": { "code": "...", "message": "..." } }` on 403; `400` on malformed params. |
 | **Sort** | `/parks`, `/campgrounds`, `/thingstodo`, `/events` accept a `sort` param; the server sorts alerts by `lastIndexedDate` locally for recency. |
 
@@ -776,17 +785,25 @@ Each step is independently testable.
 
 3. **`nps_get_park` batches ≤10 codes into one call.** `/parks` `parkCode` is an array param (confirmed in the live Swagger), so multi-park detail is one request, not N. Cap at 10 to bound payload (park records are large). Cross-reference returned vs. requested codes → `missingCodes`.
 
-4. **`nps_get_alerts` is the headline tool: category + recency surfaced, not buried.** Output leads with `category` and `lastIndexedDate`; enrichment adds a `categoryBreakdown` count; the handler sorts most-recent-first (the API doesn't guarantee order); `format()` orders Danger/Park Closure first. Empty result is explicitly framed as good news in the notice. `category` is filtered locally because `/alerts` has no category query param (it takes `parkCode`/`stateCode`/`q` only — confirmed in Swagger). Live categories confirmed: Danger, Caution, Information, Park Closure (no bare "Closure" value seen — the design previously listed it incorrectly).
+4. **`nps_get_alerts` is the headline tool: category + recency surfaced, not buried — under ONE ordering contract.** Output leads with `category` and `lastIndexedDate`; enrichment adds a `categoryBreakdown` count; the handler sorts most-recent-first (the API doesn't guarantee order). An empty page is framed in the notice, branching on `totalCount` — good news when nothing matched, a paging artifact when `start` ran past the end — and never asserted by `format()`, which cannot see `totalCount`. `category` is filtered locally because `/alerts` has no category query param (it takes `parkCode`/`stateCode`/`q` only — confirmed in Swagger). Live categories confirmed: Danger, Caution, Information, Park Closure (no bare "Closure" value seen — the design previously listed it incorrectly).
+
+   **Revised 2026-07-15 (reverses the original "`format()` orders Danger/Park Closure first").** `format()` re-sorted by category while the handler sorted by recency, so `content[]` clients (Claude Desktop) and `structuredContent` clients (Claude Code) received the same alerts in *different orders* — and the category order contradicted the tool description, the `alerts` output description, and the `limit` description, which all promise most-recent-first. One public ordering contract wins: recency, sorted once in the handler, rendered as-is by `format()`. Category stays prominent per row via the `### [{category}] {title}` heading, so severity is still scannable without reordering. `breakdown()` keeps its own `CATEGORY_ORDER` severity sort — that's the summary *string*, a distinct field, and is intentionally severity-ordered.
 
 5. **Record trimming: normalize the high-value bits, link the NPS page for the rest.** Park/campground records are deeply nested and free-text-heavy. The server flattens what agents filter on — amenity booleans, fee dollar-strings, reservable/first-come counts, coordinates, season — and surfaces `url` for the full record. It never fabricates structure from missing data: every derived field is nullable and a missing upstream value yields `null`, not a guess (framework checklist: "preserve uncertainty").
 
 6. **`nps_find_events` is modeled as its own shape.** `/events` uses a different envelope (`pagenumber`/`pagesize`/`total`/`errors[]` — no top-level `dates`), `pageNumber`/`pageSize` pagination (not `start`/`limit`), and lowercased record fields (`datestart`, `dateend`, `isfree`, `isallday`, `regresurl`, `feeinfo`, `infourl`, `sitecode` for park). Critically: NPS events have NO `parkCode` field — the park identifier is in `sitecode`. Boolean fields (`isfree`, `isallday`) are strings "true"/"false". The tool exposes `pageNumber`/`pageSize` honestly rather than faking `start`/`limit` parity, and the service normalizes the record to camelCase output. A non-empty envelope `errors[]` on a 200 folds into the notice, not a throw.
 
-7. **`nps_find_parks` `activity` filter is local.** `/parks` has no activity query param (Swagger: `parkCode`/`stateCode`/`limit`/`start`/`q`/`sort` only), so `activity` is a post-fetch substring match over the returned page. Documented on the field as narrowing-the-fetched-set, not searching-all-sites — honest about the limitation rather than implying full coverage. (Per the design skill's MCP-side-filtering gate: the set isn't bounded-and-fully-fetched here, so this is a best-effort convenience, not a guaranteed resolver.)
+7. **Local filters (`nps_find_parks.activity`, `nps_get_alerts.category`) filter the FULL matched set, never one page.** Neither `/parks` nor `/alerts` has the param (Swagger: `parkCode`/`stateCode`/`limit`/`start`/`q`/`sort` only), and the API **silently ignores** an unsupported one rather than erroring — `/parks?stateCode=CA&activity=Stargazing` returns parkCodes byte-identical to the same call without `activity`. So the filter must run locally. When one is active the tool fetches the whole set matched by the *other* filters (`limit` = the per-tool `*_FILTER_FETCH_LIMIT`, `start` = 0) and slices locally; `totalCount` is the true post-filter total.
+
+   **Revised 2026-07-15 (reverses the original "post-fetch substring match over the returned page").** The original rationale — "the set isn't bounded-and-fully-fetched here, so this is a best-effort convenience" — was factually wrong, and the page-scoped filter it justified produced false-empty results: `{stateCode: "CA", activity: "Stargazing", limit: 1}` returned "no sites matched" because the first CA site in upstream order (`alca`) offers no stargazing — while 10 CA sites do. Measured 2026-07-15: `/parks?limit=1000` returns **all 474** sites in one call, `/alerts?limit=1000` returns **all 651** in one call, and the API enforces **no maximum `limit`** (it returns `min(limit, total)` — `/thingstodo?limit=2000` yields 2000 of 3561). The filterable corpus is one request away, so the design skill's bounded-and-fully-fetched gate is *met*, and page-scoped filtering was never the honest option. **Never pass `start` upstream while filtering locally** — an upstream offset skips records before the filter sees them, which is why the two modes are mutually exclusive rather than composed. If a corpus ever exceeds the fetch limit, the response discloses a best-effort scan instead of implying exhaustiveness.
 
 8. **`nps_get_activities` keeps `/thingstodo`'s single-string param contract.** Unlike the array-param endpoints, `/thingstodo` takes a single `parkCode`/`stateCode` (Swagger). The schema reflects that (single value + a `missing_filter` error requiring at least one), rather than pretending it accepts a list — avoids a silent "only the first code worked" bug.
 
 9. **Truncation fields are optional; `totalCount` is required.** Per the cross-cutting rule: `ctx.enrich.total(n)` always (required `totalCount`); `ctx.enrich.truncated({ shown, cap })` only when the cap is hit, so `shown`/`cap` stay optional-and-unset on full results — declaring them required would throw -32007 on every non-truncated response.
+
+   **Extended 2026-07-15 — the "more pages exist" test is start-aware, and an empty page is not an empty result.** Truncation fires on `start + shown < total`, not `total > shown`: the latter misfires on the last page (start=50, 8 returned, total=58 is complete, not truncated) and would advertise a next page that doesn't exist. Every list tool's truncation `guidance` names the concrete next retrieval action (`start=<n>`, or `pageNumber=<n>` for `/events`), since a disclosure the agent can't act on is only half a disclosure. Correspondingly, an empty page with a **non-zero** `totalCount` is a paging artifact, not an absence — each tool's empty-result notice branches on `total > 0` and says so. Collapsing the two lets `nps_get_alerts` answer "nothing closed or hazardous" while `totalCount` reports active closures — the same false-empty reassurance the §7 revision removed, reached by over-paging instead of page-scoped filtering.
+
+   **The empty branch of `format()` defers rather than concludes.** `format()` is handed the domain payload alone, so `totalCount` is structurally out of reach and it cannot distinguish an all-clear from a page past the end. Every list tool's empty text therefore points at the notice ("See the notice for what this means") instead of asserting an interpretation it has no basis for — the notice is the single place that owns that call. This matters most on `nps_get_alerts`, where a wrong guess reads as a safety all-clear.
 
 10. **No auth scopes, no resources, no prompts, no DataCanvas/Mirror.** Read-only single-source public data → stdio + HTTP-`none`, scopes add nothing. Data is point-in-time discovery/detail, not analytical row sets (no SQL workspace) and not a bulk corpus queried more than it changes (no mirror). Resources would duplicate tools for the resource-supporting minority; deferred.
 

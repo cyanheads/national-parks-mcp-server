@@ -192,24 +192,43 @@ export const npsFindEvents = tool('nps_find_events', {
 
     ctx.enrich({ appliedFilters: filters.join(', ') });
     ctx.enrich.total(result.total);
-    if (result.total > result.data.length) {
-      ctx.enrich.truncated({ shown: result.data.length, cap: input.pageSize });
-    }
     ctx.log.info('Fetched events', {
       count: result.data.length,
       total: result.total,
+      pageNumber: input.pageNumber,
       upstreamErrors: result.errors.length,
     });
 
     // The events envelope can report errors[] even on a 200 — warn, don't throw.
     const warning =
       result.errors.length > 0 ? ` Upstream reported: ${result.errors.join('; ')}.` : '';
+    const notices: string[] = [];
     if (result.data.length === 0) {
-      ctx.enrich.notice(
-        `No events found for ${filters.join(', ')}. Widen the date range, drop the query filter, or check the park calendar via the park page. The events feed is sparser than alerts/campgrounds.${warning}`,
+      // An empty page past the end is NOT an absence of events.
+      notices.push(
+        result.total > 0
+          ? `No events on this page: pageNumber=${input.pageNumber} is past the end of ${result.total} matching event(s). Re-request with pageNumber=1 to see them.${warning}`
+          : `No events found for ${filters.join(', ')}. Widen the date range, drop the query filter, or check the park calendar via the park page. The events feed is sparser than alerts/campgrounds.${warning}`,
       );
     } else if (warning) {
-      ctx.enrich.notice(`Events returned, but the upstream feed reported issues.${warning}`);
+      notices.push(`Events returned, but the upstream feed reported issues.${warning}`);
+    }
+
+    // Every notice source composes into ONE string: ctx.enrich.truncated()
+    // writes a notice internally, so a second writer would clobber the first.
+    // /events pages by 1-based pageNumber, not a start offset.
+    const seenThroughPage = (input.pageNumber - 1) * input.pageSize + result.data.length;
+    if (seenThroughPage < result.total) {
+      notices.push(
+        `Showing ${result.data.length} of ${result.total} events. Request the next page with pageNumber=${input.pageNumber + 1}.`,
+      );
+      ctx.enrich.truncated({
+        shown: result.data.length,
+        cap: input.pageSize,
+        guidance: notices.join(' '),
+      });
+    } else if (notices.length > 0) {
+      ctx.enrich.notice(notices.join(' '));
     }
 
     return { events: result.data };

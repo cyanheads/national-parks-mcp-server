@@ -168,15 +168,36 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
 
     ctx.enrich({ appliedFilters: filters.length > 0 ? filters.join(', ') : 'none' });
     ctx.enrich.total(result.total);
-    if (result.total > result.data.length) {
-      ctx.enrich.truncated({ shown: result.data.length, cap: input.limit });
-    }
-    ctx.log.info('Fetched campgrounds', { count: result.data.length, total: result.total });
+    ctx.log.info('Fetched campgrounds', {
+      count: result.data.length,
+      total: result.total,
+      start: input.start,
+    });
 
+    const notices: string[] = [];
     if (result.data.length === 0) {
-      ctx.enrich.notice(
-        `No campgrounds found for ${filters.length > 0 ? filters.join(', ') : 'this search'}. The park may have no NPS-managed campgrounds, or try a broader state query. Some parks list lodging/backcountry permits instead — see the park page via nps_get_park.`,
+      // An empty page past the end is NOT an absence of campgrounds.
+      notices.push(
+        result.total > 0
+          ? `No campgrounds on this page: start=${input.start} is past the end of ${result.total} matching campground(s). Re-request with start=0 to see them.`
+          : `No campgrounds found for ${filters.length > 0 ? filters.join(', ') : 'this search'}. The park may have no NPS-managed campgrounds, or try a broader state query. Some parks list lodging/backcountry permits instead — see the park page via nps_get_park.`,
       );
+    }
+
+    // Every notice source composes into ONE string: ctx.enrich.truncated()
+    // writes a notice internally, so a second writer would clobber the first.
+    const nextStart = input.start + result.data.length;
+    if (nextStart < result.total) {
+      notices.push(
+        `Showing ${result.data.length} of ${result.total} campgrounds. Request the next page with start=${nextStart}.`,
+      );
+      ctx.enrich.truncated({
+        shown: result.data.length,
+        cap: input.limit,
+        guidance: notices.join(' '),
+      });
+    } else if (notices.length > 0) {
+      ctx.enrich.notice(notices.join(' '));
     }
 
     return { campgrounds: result.data };

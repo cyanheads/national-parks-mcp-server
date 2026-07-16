@@ -192,6 +192,7 @@ export class NpsService {
       parkCode: params.parkCode,
       stateCode: params.stateCode,
       limit: params.limit,
+      start: params.start,
     });
     const env = await this.get<NpsStandardEnvelopeRaw<NpsAlertRaw>>('/alerts', query, ctx);
     return {

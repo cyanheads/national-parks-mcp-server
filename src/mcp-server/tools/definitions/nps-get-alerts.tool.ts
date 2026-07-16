@@ -1,7 +1,7 @@
 /**
  * @fileoverview nps_get_alerts — the time-sensitive headline tool. Current
  * alerts for park(s) or state(s) with category and recency surfaced
- * prominently, sorted most-recent-first, Danger/Park Closure ordered first.
+ * prominently, sorted most-recent-first on every client surface.
  * @module mcp-server/tools/definitions/nps-get-alerts.tool
  */
 
@@ -10,7 +10,7 @@ import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getNpsService } from '@/services/nps/nps-service.js';
 import type { NpsAlert } from '@/services/nps/types.js';
 
-/** Severity order for grouping in format() — trip-affecting categories first. */
+/** Severity order for the categoryBreakdown summary — trip-affecting first. */
 const CATEGORY_ORDER: Record<string, number> = {
   Danger: 0,
   'Park Closure': 1,
@@ -18,10 +18,20 @@ const CATEGORY_ORDER: Record<string, number> = {
   Information: 3,
 };
 
+/**
+ * Upstream page size used when `category` forces local filtering. `/alerts` has
+ * no category param, so the filter can only be honest if it sees the whole set
+ * matched by parkCode/stateCode/q — one request covers it (651 alerts service-wide
+ * as of 2026-07; the API caps nothing and returns min(limit, total)). Paired with
+ * `start: 0`: an upstream offset combined with a local filter silently skips
+ * records, so the two must never co-occur.
+ */
+const CATEGORY_FILTER_FETCH_LIMIT = 1000;
+
 export const npsGetAlerts = tool('nps_get_alerts', {
   title: 'national-parks-mcp-server: get alerts',
   description:
-    'Current alerts for a park or a whole state — closures, hazards, caution notices, and information — with category and recency surfaced first so "is anything closed at Glacier right now?" is answered at a glance. Get park codes from nps_find_parks, or pass a stateCode for a statewide "what\'s closed" sweep. Returns most-recent-first; an empty result means the park reports nothing closed or hazardous, which is good news, not an error. Closures and road conditions change daily — re-check before departure.',
+    'Current alerts for a park or a whole state — closures, hazards, caution notices, and information — with category and recency surfaced first so "is anything closed at Glacier right now?" is answered at a glance. Get park codes from nps_find_parks, or pass a stateCode for a statewide "what\'s closed" sweep. Returns most-recent-first; an empty result with totalCount 0 means the park reports nothing closed or hazardous — good news, not an error. An empty page with a non-zero totalCount only means start ran past the end, so read the notice rather than the empty list. Closures and road conditions change daily — re-check before departure.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z
@@ -42,7 +52,7 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       .enum(['Danger', 'Caution', 'Information', 'Park Closure'])
       .optional()
       .describe(
-        'Filter to one alert category. "Danger" and "Park Closure" are the high-priority ones for trip safety. Omit to see all categories (the default — closures and hazards should not be missed).',
+        'Filter to one alert category. "Danger" and "Park Closure" are the high-priority ones for trip safety. Applied locally (the API has no category param) across every alert matching parkCode/stateCode/query, then paginated with start/limit — so totalCount is the true count of matching alerts, not a per-page tally. Omit to see all categories (the default — closures and hazards should not be missed).',
       ),
     query: z
       .string()
@@ -57,6 +67,14 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       .max(50)
       .default(20)
       .describe('Maximum alerts to return (1–50), most-recent first.'),
+    start: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe(
+        'Zero-based offset for pagination within the matched set. Use with limit to page through results — when totalCount exceeds what was returned, re-request with start advanced by limit.',
+      ),
   }),
   output: z.object({
     alerts: z
@@ -94,7 +112,7 @@ export const npsGetAlerts = tool('nps_get_alerts', {
           .describe('A single alert with its category, recency, and detail.'),
       )
       .describe(
-        'Current alerts, sorted most-recent first. An empty array means no active alerts — good news, not an error.',
+        'Current alerts, sorted most-recent first. An empty array with totalCount 0 means no active alerts — good news, not an error; with a non-zero totalCount it means start paged past the end of the matches. The notice says which.',
       ),
   }),
   enrichment: {
@@ -116,7 +134,7 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       .string()
       .optional()
       .describe(
-        'Message when there are no active alerts — explicitly states this is good news (the park reports nothing closed/hazardous right now).',
+        'Message when the page is empty — states which case it is: good news (totalCount 0, the park reports nothing closed/hazardous right now) or a paging artifact (start ran past the end of a non-empty matched set).',
       ),
   },
   enrichmentTrailer: {
@@ -143,29 +161,42 @@ export const npsGetAlerts = tool('nps_get_alerts', {
   ],
 
   async handler(input, ctx) {
+    // Two-mode fetch. A local filter and an upstream offset cannot compose —
+    // `start` would skip records upstream before `category` ever saw them — so
+    // when filtering, pull the whole matched set from offset 0 and slice here.
+    // Unfiltered, `start`/`limit` pass straight through as the cheap page fetch.
     const result = await getNpsService().getAlerts(
       {
         query: input.query,
         parkCode: input.parkCode,
         stateCode: input.stateCode,
-        limit: input.limit,
+        limit: input.category ? CATEGORY_FILTER_FETCH_LIMIT : input.limit,
+        start: input.category ? 0 : input.start,
       },
       ctx,
     );
 
-    let alerts = result.data;
-    let total = result.total;
-
-    // Category filtered locally — /alerts has no category param.
-    if (input.category) {
-      alerts = alerts.filter((a) => a.category === input.category);
-      total = alerts.length;
-    }
-
-    // Sort most-recent-first; the API doesn't guarantee order.
-    alerts = [...alerts].sort((a, b) =>
+    // Sort most-recent-first before slicing; the API doesn't guarantee order.
+    // This is the single ordering contract — format() renders it as-is.
+    let alerts = [...result.data].sort((a, b) =>
       (b.lastIndexedDate ?? '').localeCompare(a.lastIndexedDate ?? ''),
     );
+    let total = result.total;
+    const notices: string[] = [];
+
+    if (input.category) {
+      // The upstream total is pre-filter; a shortfall means the corpus outgrew
+      // the fetch limit and the filter only saw the first slice of it.
+      const scannedWholeCorpus = result.data.length >= result.total;
+      const matched = alerts.filter((a) => a.category === input.category);
+      total = matched.length;
+      alerts = matched.slice(input.start, input.start + input.limit);
+      if (!scannedWholeCorpus) {
+        notices.push(
+          `Only the first ${result.data.length} of ${result.total} alerts were scanned for category="${input.category}", so this is a best-effort match rather than every one — narrow with parkCode or stateCode for an exhaustive result.`,
+        );
+      }
+    }
 
     const filters = [
       input.parkCode ? `parkCode=${input.parkCode}` : null,
@@ -179,15 +210,29 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       categoryBreakdown: breakdown(alerts),
     });
     ctx.enrich.total(total);
-    if (total > alerts.length) {
-      ctx.enrich.truncated({ shown: alerts.length, cap: input.limit });
-    }
-    ctx.log.info('Fetched alerts', { count: alerts.length, total });
+    ctx.log.info('Fetched alerts', { count: alerts.length, total, start: input.start });
 
     if (alerts.length === 0) {
-      ctx.enrich.notice(
-        `No active alerts for ${filters.length > 0 ? filters.join(', ') : 'this search'}. The park currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.`,
+      // An empty page past the end is NOT an absence of alerts — reporting
+      // "nothing closed or hazardous" alongside a non-zero totalCount would
+      // reassure a trip-planning client while closures are active.
+      notices.push(
+        total > 0
+          ? `No alerts on this page: start=${input.start} is past the end of ${total} matching alert(s). Re-request with start=0 to see them — this is a paging artifact, not an all-clear.`
+          : `No active alerts for ${filters.length > 0 ? filters.join(', ') : 'this search'}. The park currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.`,
       );
+    }
+
+    // Every notice source composes into ONE string: ctx.enrich.truncated()
+    // writes a notice internally, so a second writer would clobber the first.
+    const nextStart = input.start + alerts.length;
+    if (nextStart < total) {
+      notices.push(
+        `Showing ${alerts.length} of ${total} matching alerts. Request the next page with start=${nextStart}.`,
+      );
+      ctx.enrich.truncated({ shown: alerts.length, cap: input.limit, guidance: notices.join(' ') });
+    } else if (notices.length > 0) {
+      ctx.enrich.notice(notices.join(' '));
     }
 
     return { alerts };
@@ -195,13 +240,17 @@ export const npsGetAlerts = tool('nps_get_alerts', {
 
   format: (result) => {
     if (result.alerts.length === 0) {
-      return [{ type: 'text', text: 'No active alerts — nothing currently closed or hazardous.' }];
+      // format() receives only the domain payload, never totalCount, so it cannot
+      // tell an all-clear from a page past the end. The notice branches on total
+      // and says which one it is; asserting either here would guess.
+      return [
+        { type: 'text', text: 'No alerts in this response. See the notice for what this means.' },
+      ];
     }
-    const sorted = [...result.alerts].sort(
-      (a, b) => (CATEGORY_ORDER[a.category] ?? 9) - (CATEGORY_ORDER[b.category] ?? 9),
-    );
+    // Render in the handler's order (most-recent-first) — re-sorting here would
+    // hand structuredContent and content[] clients different result orders.
     const lines: string[] = [`## ${result.alerts.length} active alerts`, ''];
-    for (const a of sorted) {
+    for (const a of result.alerts) {
       lines.push(`### [${a.category || 'Alert'}] ${a.title}`);
       lines.push(
         `**Park:** ${a.parkCode} | **Updated:** ${a.lastIndexedDate ?? 'unknown'} | **ID:** ${a.id}`,

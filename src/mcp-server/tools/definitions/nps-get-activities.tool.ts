@@ -150,15 +150,36 @@ export const npsGetActivities = tool('nps_get_activities', {
 
     ctx.enrich({ appliedFilters: filters.join(', ') });
     ctx.enrich.total(result.total);
-    if (result.total > result.data.length) {
-      ctx.enrich.truncated({ shown: result.data.length, cap: input.limit });
-    }
-    ctx.log.info('Fetched activities', { count: result.data.length, total: result.total });
+    ctx.log.info('Fetched activities', {
+      count: result.data.length,
+      total: result.total,
+      start: input.start,
+    });
 
+    const notices: string[] = [];
     if (result.data.length === 0) {
-      ctx.enrich.notice(
-        `No curated activities found for ${filters.join(', ')}. Not every park has a curated things-to-do list — try nps_get_park for the park's activity tags and description.`,
+      // An empty page past the end is NOT an absence of activities.
+      notices.push(
+        result.total > 0
+          ? `No activities on this page: start=${input.start} is past the end of ${result.total} matching activity/activities. Re-request with start=0 to see them.`
+          : `No curated activities found for ${filters.join(', ')}. Not every park has a curated things-to-do list — try nps_get_park for the park's activity tags and description.`,
       );
+    }
+
+    // Every notice source composes into ONE string: ctx.enrich.truncated()
+    // writes a notice internally, so a second writer would clobber the first.
+    const nextStart = input.start + result.data.length;
+    if (nextStart < result.total) {
+      notices.push(
+        `Showing ${result.data.length} of ${result.total} activities. Request the next page with start=${nextStart}.`,
+      );
+      ctx.enrich.truncated({
+        shown: result.data.length,
+        cap: input.limit,
+        guidance: notices.join(' '),
+      });
+    } else if (notices.length > 0) {
+      ctx.enrich.notice(notices.join(' '));
     }
 
     return { activities: result.data };

@@ -75,7 +75,7 @@ describe('nps_find_parks', () => {
     expect(enrichment.cap).toBe(1);
   });
 
-  it('applies the activity filter locally over the returned page', async () => {
+  it('applies the activity filter locally over the full matched set', async () => {
     findParks.mockResolvedValueOnce({
       total: 2,
       data: [
@@ -117,5 +117,138 @@ describe('nps_find_parks', () => {
     expect(text).toContain('yose');
     expect(text).toContain('35.00');
     expect(text).toContain('37.85');
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * #1 — local filter vs. pagination
+   * ----------------------------------------------------------------------- */
+
+  it('passes start/limit straight upstream when no activity filter is active', async () => {
+    findParks.mockResolvedValueOnce({ total: 34, data: [makePark()] });
+    const input = npsFindParks.input.parse({ stateCode: 'CA', limit: 10, start: 20 });
+    await npsFindParks.handler(input, ctx);
+
+    expect(findParks).toHaveBeenCalledWith(
+      expect.objectContaining({ stateCode: 'CA', limit: 10, start: 20 }),
+      ctx,
+    );
+  });
+
+  it('fetches the whole matched set from offset 0 when activity filtering', async () => {
+    findParks.mockResolvedValueOnce({ total: 1, data: [makePark()] });
+    const input = npsFindParks.input.parse({
+      stateCode: 'CA',
+      activity: 'Stargazing',
+      limit: 1,
+      start: 0,
+    });
+    await npsFindParks.handler(input, ctx);
+
+    // Never the caller's limit, never a non-zero start: an upstream offset would
+    // skip records the local filter never gets to see.
+    expect(findParks).toHaveBeenCalledWith(
+      expect.objectContaining({ stateCode: 'CA', limit: 1000, start: 0 }),
+      ctx,
+    );
+  });
+
+  it('finds matches a small limit would have hidden behind non-matching parks', async () => {
+    // Mirrors live CA data: the first sites in upstream order (alca, buov, cabr)
+    // offer no stargazing, so a limit:1 upstream page filtered to empty and the
+    // tool reported no matches — while 10 CA sites actually offer it.
+    findParks.mockResolvedValueOnce({
+      total: 4,
+      data: [
+        makePark({ parkCode: 'alca', activities: ['Guided Tours'] }),
+        makePark({ parkCode: 'buov', activities: ['Hiking'] }),
+        makePark({ parkCode: 'jotr', activities: ['Hiking', 'Stargazing'] }),
+        makePark({ parkCode: 'deva', activities: ['Stargazing'] }),
+      ],
+    });
+    const input = npsFindParks.input.parse({
+      stateCode: 'CA',
+      activity: 'Stargazing',
+      limit: 1,
+      start: 0,
+    });
+    const result = await npsFindParks.handler(input, ctx);
+
+    expect(result.parks.map((p) => p.parkCode)).toEqual(['jotr']);
+    // Old behavior: parks: [], totalCount: 0, "no sites matched" notice.
+    expect(getEnrichment(ctx).totalCount).toBe(2);
+    expect(getEnrichment(ctx).notice).toContain('start=1');
+  });
+
+  it('slices the filtered set locally so start pages within the matches', async () => {
+    findParks.mockResolvedValueOnce({
+      total: 4,
+      data: [
+        makePark({ parkCode: 'alca', activities: ['Guided Tours'] }),
+        makePark({ parkCode: 'jotr', activities: ['Stargazing'] }),
+        makePark({ parkCode: 'buov', activities: ['Hiking'] }),
+        makePark({ parkCode: 'deva', activities: ['Stargazing'] }),
+      ],
+    });
+    const input = npsFindParks.input.parse({
+      stateCode: 'CA',
+      activity: 'Stargazing',
+      limit: 1,
+      start: 1,
+    });
+    const result = await npsFindParks.handler(input, ctx);
+
+    // start=1 is the 2nd *match*, not the 2nd raw record (which offers no stargazing).
+    expect(result.parks.map((p) => p.parkCode)).toEqual(['deva']);
+    expect(getEnrichment(ctx).totalCount).toBe(2);
+  });
+
+  it('discloses a best-effort match when the corpus outgrew the fetch limit', async () => {
+    findParks.mockResolvedValueOnce({
+      total: 5000,
+      data: Array.from({ length: 1000 }, (_, i) =>
+        makePark({ parkCode: `p${i}`, activities: i === 0 ? ['Stargazing'] : ['Hiking'] }),
+      ),
+    });
+    const input = npsFindParks.input.parse({ activity: 'Stargazing' });
+    await npsFindParks.handler(input, ctx);
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('first 1000 of 5000');
+    expect(notice).toContain('best-effort');
+  });
+
+  it('does not tell the agent to broaden a search that actually matched', async () => {
+    // An empty page past the end is a paging artifact; "broaden the query"
+    // would send the agent to fix the wrong thing while 2 sites match.
+    findParks.mockResolvedValueOnce({
+      total: 2,
+      data: [
+        makePark({ parkCode: 'jotr', activities: ['Stargazing'] }),
+        makePark({ parkCode: 'deva', activities: ['Stargazing'] }),
+      ],
+    });
+    const input = npsFindParks.input.parse({
+      stateCode: 'CA',
+      activity: 'Stargazing',
+      limit: 5,
+      start: 50,
+    });
+    const result = await npsFindParks.handler(input, ctx);
+
+    expect(result.parks).toEqual([]);
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalCount).toBe(2);
+    expect(enrichment.notice).not.toMatch(/Broaden the query/);
+    expect(enrichment.notice).toContain('start=50 is past the end of 2');
+  });
+
+  it('treats a whitespace-only activity from a form client as no filter', async () => {
+    findParks.mockResolvedValueOnce({ total: 34, data: [makePark()] });
+    const input = npsFindParks.input.parse({ stateCode: 'CA', activity: '   ', limit: 10 });
+    await npsFindParks.handler(input, ctx);
+
+    // No corpus pull, no filter, no bogus activity echo.
+    expect(findParks).toHaveBeenCalledWith(expect.objectContaining({ limit: 10 }), ctx);
+    expect(getEnrichment(ctx).appliedFilters).not.toMatch(/activity/);
   });
 });

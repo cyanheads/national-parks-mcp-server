@@ -217,6 +217,23 @@ describe('NpsService', () => {
       expect(alert.lastIndexedDate).toBe('2026-05-30');
       expect(alert.category).toBe('Park Closure');
     });
+
+    it('sends start so alerts can paginate like the sibling list endpoints', async () => {
+      mockFetch.mockResolvedValueOnce(okResponse({ total: '58', data: [] }));
+      await service.getAlerts({ stateCode: 'CA', limit: 20, start: 40 }, ctx);
+
+      const url = mockFetch.mock.calls[0]?.[0] as string;
+      expect(url).toContain('start=40');
+      expect(url).toContain('limit=20');
+    });
+
+    it('omits start when unset rather than sending start=undefined', async () => {
+      mockFetch.mockResolvedValueOnce(okResponse({ total: '0', data: [] }));
+      await service.getAlerts({ parkCode: 'glac', limit: 20 }, ctx);
+
+      const url = mockFetch.mock.calls[0]?.[0] as string;
+      expect(url).not.toContain('start=');
+    });
   });
 
   describe('findCampgrounds', () => {

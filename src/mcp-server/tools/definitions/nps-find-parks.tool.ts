@@ -1,7 +1,8 @@
 /**
  * @fileoverview nps_find_parks — the entry-point tool. Resolves a place name,
  * state, or free-text query to NPS parks, returning the parkCode spine plus a
- * trip-planning summary. Activity is filtered locally (no upstream param).
+ * trip-planning summary. Activity is filtered locally over the full matched set
+ * (no upstream param).
  * @module mcp-server/tools/definitions/nps-find-parks.tool
  */
 
@@ -9,6 +10,17 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getNpsService } from '@/services/nps/nps-service.js';
 import type { NpsParkSummary } from '@/services/nps/types.js';
+
+/**
+ * Upstream page size used when `activity` forces local filtering. `/parks` has
+ * no activity param, so the filter can only be honest if it sees the whole set
+ * matched by query/stateCode — one request covers it (474 sites service-wide as
+ * of 2026-07; the API caps nothing and returns min(limit, total)). query and
+ * stateCode still narrow upstream first, so the full-catalog fetch is the worst
+ * case, not the common one. Paired with `start: 0`: an upstream offset combined
+ * with a local filter silently skips records, so the two must never co-occur.
+ */
+const ACTIVITY_FILTER_FETCH_LIMIT = 1000;
 
 export const npsFindParks = tool('nps_find_parks', {
   title: 'national-parks-mcp-server: find parks',
@@ -33,7 +45,7 @@ export const npsFindParks = tool('nps_find_parks', {
       .string()
       .optional()
       .describe(
-        'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match applied locally after fetch — it narrows the returned page, it does not search all ~470 sites by activity. Use nps_get_park to see a park\'s full activity list.',
+        'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match applied locally (the API has no activity param) across every site matching query/stateCode, then paginated with start/limit — so totalCount is the true count of matching parks, not a per-page tally. Use nps_get_park to see a park\'s full activity list.',
       ),
     limit: z
       .number()
@@ -149,47 +161,77 @@ export const npsFindParks = tool('nps_find_parks', {
   ],
 
   async handler(input, ctx) {
+    // Two-mode fetch. A local filter and an upstream offset cannot compose —
+    // `start` would skip records upstream before `activity` ever saw them — so
+    // when filtering, pull the whole matched set from offset 0 and slice here.
+    // Unfiltered, `start`/`limit` pass straight through as the cheap page fetch.
+    const activity = input.activity?.trim();
     const result = await getNpsService().findParks(
       {
         query: input.query,
         stateCode: input.stateCode,
-        limit: input.limit,
-        start: input.start,
+        limit: activity ? ACTIVITY_FILTER_FETCH_LIMIT : input.limit,
+        start: activity ? 0 : input.start,
       },
       ctx,
     );
 
     let parks = result.data;
     let total = result.total;
+    const notices: string[] = [];
 
-    // Activity filter is local — /parks has no activity param. Narrows the page.
-    if (input.activity) {
-      const needle = input.activity.trim().toLowerCase();
-      parks = parks.filter((p) => p.activities.some((a) => a.toLowerCase().includes(needle)));
-      total = parks.length;
+    if (activity) {
+      // The upstream total is pre-filter; a shortfall means the corpus outgrew
+      // the fetch limit and the filter only saw the first slice of it.
+      const scannedWholeCorpus = result.data.length >= result.total;
+      const needle = activity.toLowerCase();
+      const matched = parks.filter((p) =>
+        p.activities.some((a) => a.toLowerCase().includes(needle)),
+      );
+      total = matched.length;
+      parks = matched.slice(input.start, input.start + input.limit);
+      if (!scannedWholeCorpus) {
+        notices.push(
+          `Only the first ${result.data.length} of ${result.total} sites were scanned for activity="${activity}", so this is a best-effort match rather than every one — narrow with stateCode or query for an exhaustive result.`,
+        );
+      }
     }
 
     const filters = [
       input.query ? `query="${input.query}"` : null,
       input.stateCode ? `stateCode=${input.stateCode}` : null,
-      input.activity ? `activity="${input.activity}"` : null,
+      activity ? `activity="${activity}"` : null,
     ].filter(Boolean);
     ctx.enrich({ appliedFilters: filters.length > 0 ? filters.join(', ') : 'none' });
     ctx.enrich.total(total);
-    if (total > parks.length) {
-      ctx.enrich.truncated({ shown: parks.length, cap: input.limit });
-    }
 
     ctx.log.info('Resolved parks', {
       count: parks.length,
       total,
-      hasActivityFilter: Boolean(input.activity),
+      start: input.start,
+      hasActivityFilter: Boolean(activity),
     });
 
     if (parks.length === 0) {
-      ctx.enrich.notice(
-        `No NPS sites matched ${filters.length > 0 ? filters.join(', ') : 'your search'}. Broaden the query, verify the two-letter state code, or drop the activity filter. Coverage is US NPS sites only — not state parks or Forest Service / BLM land.`,
+      // An empty page past the end is NOT an absence of matches — pointing the
+      // agent at "broaden the query" would send it to fix the wrong thing.
+      notices.push(
+        total > 0
+          ? `No sites on this page: start=${input.start} is past the end of ${total} matching site(s). Re-request with start=0 to see them.`
+          : `No NPS sites matched ${filters.length > 0 ? filters.join(', ') : 'your search'}. Broaden the query, verify the two-letter state code, or drop the activity filter. Coverage is US NPS sites only — not state parks or Forest Service / BLM land.`,
       );
+    }
+
+    // Every notice source composes into ONE string: ctx.enrich.truncated()
+    // writes a notice internally, so a second writer would clobber the first.
+    const nextStart = input.start + parks.length;
+    if (nextStart < total) {
+      notices.push(
+        `Showing ${parks.length} of ${total} matching sites. Request the next page with start=${nextStart}.`,
+      );
+      ctx.enrich.truncated({ shown: parks.length, cap: input.limit, guidance: notices.join(' ') });
+    } else if (notices.length > 0) {
+      ctx.enrich.notice(notices.join(' '));
     }
 
     return { parks };
