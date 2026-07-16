@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -59,8 +59,8 @@ Resolve a place name, US state, or free-text query into NPS parks — the entry 
 
 - Free-text search across park names and descriptions (e.g. `"yosemite"`, `"civil war"`, `"redwood"`)
 - Filter by two-letter `stateCode` or a comma-separated list (e.g. `"CA"`, `"WY,MT,ID"`)
-- Optional `activity` filter — case-insensitive substring match applied locally over the returned page (narrows what was fetched; does not search all ~470 sites)
-- Pagination via `limit` (1–50, default 10) and `start` offset
+- Optional `activity` filter — case-insensitive substring match applied locally (the API has no activity param) across every site matching `query`/`stateCode`, then paginated
+- Pagination via `limit` (1–50, default 10) and `start` offset; `totalCount` counts the whole matched set, so truncation guidance names the next `start`
 - Summary carries `parkCode`, designation, states, description, coordinates, headline activities, lowest entrance fee, and the NPS page
 - Enrichment reports `totalCount`, applied-filter echo, and broadening guidance when nothing matched
 
@@ -82,10 +82,11 @@ Full trip-planning detail for one or more parks by `parkCode`.
 
 Current alerts for a park or a whole state, with category and recency leading.
 
-- Filter by `parkCode`, `stateCode`, or free-text `query`; optional `category` (`Danger`, `Caution`, `Information`, `Park Closure`)
-- Sorted most-recent-first; `format()` orders `Danger` / `Park Closure` ahead of the rest
-- `categoryBreakdown` enrichment counts returned alerts per category so severity is legible without scanning each one
-- An empty result is explicitly framed as good news (the park reports nothing closed or hazardous), not an error
+- Filter by `parkCode`, `stateCode`, or free-text `query`; optional `category` (`Danger`, `Caution`, `Information`, `Park Closure`) applied locally (the API has no category param) across every matching alert, then paginated
+- Pagination via `limit` (1–50, default 20) and `start` offset; truncation guidance names the next `start`
+- Sorted most-recent-first, identically on both client surfaces (`structuredContent` and `content[]`)
+- `categoryBreakdown` enrichment counts returned alerts per category — severity-ordered — so severity is legible without scanning each one
+- An empty result is explicitly framed in the notice — good news (the park reports nothing closed or hazardous) when nothing matched, or a paging artifact when `start` ran past the end — never a bare error
 - `lastIndexedDate` is the recency signal — a stale date may mean the condition has changed
 
 ---

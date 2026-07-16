@@ -1,6 +1,6 @@
 # national-parks-mcp-server - Directory Structure
 
-Generated on: 2026-06-20 11:58:06
+Generated on: 2026-07-16 09:12:13
 
 ```text
 national-parks-mcp-server/
@@ -11,10 +11,12 @@ national-parks-mcp-server/
 │   ├── mcp.json
 │   └── plugin.json
 ├── .github/
-│   └── ISSUE_TEMPLATE/
-│       ├── bug_report.yml
-│       ├── config.yml
-│       └── feature_request.yml
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml
+│   │   ├── config.yml
+│   │   └── feature_request.yml
+│   ├── FUNDING.yml
+│   └── SECURITY.md
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json
@@ -159,6 +161,7 @@ national-parks-mcp-server/
 │       └── nps-get-park.tool.test.ts
 ├── .dockerignore
 ├── .env.example
+├── .gitattributes
 ├── .gitignore
 ├── .mcpbignore
 ├── AGENTS.md
