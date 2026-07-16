@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "national-parks-mcp-server",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "license": "Apache-2.0",
   "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API. STDIO or Streamable HTTP.",
   "author": { "name": "cyanheads" },

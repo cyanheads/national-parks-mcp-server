@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.5](changelog/0.1.x/0.1.5.md) — 2026-07-16
+
+nps_find_events adds window-intersected occurrenceDates and isRecurring so a recurring series no longer reads as its frozen anchor date; invalid parkCode/stateCode now return the tool's declared recovery hint (format checks moved into the handler across four tools), and impossible calendar dates are rejected client-side.
+
 ## [0.1.4](changelog/0.1.x/0.1.4.md) — 2026-07-16
 
 nps_find_parks re-ranks query results so exact parkCode/name matches lead (NPS returns matches unranked), and nps_find_parks/nps_get_park now render their full activity and image lists in the text channel to match structuredContent — plus a new nps_get_park imagesTruncated flag disclosing the upstream 5-image cap.
