@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -57,7 +57,7 @@ Coverage is **US National Park Service sites only** — national parks, monument
 
 Resolve a place name, US state, or free-text query into NPS parks — the entry point.
 
-- Free-text search across park names and descriptions (e.g. `"yosemite"`, `"civil war"`, `"redwood"`)
+- Free-text search across park names and descriptions (e.g. `"yosemite"`, `"civil war"`, `"redwood"`); results are re-ranked locally so an exact `parkCode` or name match leads, since NPS returns matches in alphabetical-by-code order with no relevance ranking
 - Filter by two-letter `stateCode` or a comma-separated list (e.g. `"CA"`, `"WY,MT,ID"`)
 - Optional `activity` filter — case-insensitive substring match applied locally (the API has no activity param) across every site matching `query`/`stateCode`, then paginated
 - Pagination via `limit` (1–50, default 10) and `start` offset; `totalCount` counts the whole matched set, so truncation guidance names the next `start`
@@ -73,7 +73,7 @@ Full trip-planning detail for one or more parks by `parkCode`.
 - Batch up to **10 codes in a single upstream call**
 - Always-present core: name, designation, states, description, coordinates, weather overview, NPS page
 - Optional `fields` selector (`activities`, `topics`, `fees`, `hours`, `contacts`, `directions`, `images`) trims the payload to the sections you need
-- Entrance fees and passes broken out by category; operating hours by area/season with per-weekday values; phone and email contacts; representative images (capped at 5)
+- Entrance fees and passes broken out by category; operating hours by area/season with per-weekday values; phone and email contacts; representative images (capped at 5, with `imagesTruncated` disclosing when the park has more upstream)
 - Unresolved codes surface as `missingCodes` enrichment with a correction hint; only a fully-empty result is an error
 
 ---

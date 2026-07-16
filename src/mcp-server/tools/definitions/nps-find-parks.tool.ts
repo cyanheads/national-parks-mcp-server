@@ -1,8 +1,11 @@
 /**
  * @fileoverview nps_find_parks — the entry-point tool. Resolves a place name,
  * state, or free-text query to NPS parks, returning the parkCode spine plus a
- * trip-planning summary. Activity is filtered locally over the full matched set
- * (no upstream param).
+ * trip-planning summary. Two local passes run over the full matched set (never a
+ * single upstream page): an `activity` filter (the API has no activity param)
+ * and a relevance re-rank for `query` (the API's `q` returns no relevance order,
+ * so exact parkCode/name matches are sorted ahead of description-only matches
+ * before the page is sliced).
  * @module mcp-server/tools/definitions/nps-find-parks.tool
  */
 
@@ -12,15 +15,18 @@ import { getNpsService } from '@/services/nps/nps-service.js';
 import type { NpsParkSummary } from '@/services/nps/types.js';
 
 /**
- * Upstream page size used when `activity` forces local filtering. `/parks` has
- * no activity param, so the filter can only be honest if it sees the whole set
- * matched by query/stateCode — one request covers it (474 sites service-wide as
- * of 2026-07; the API caps nothing and returns min(limit, total)). query and
- * stateCode still narrow upstream first, so the full-catalog fetch is the worst
+ * Upstream page size used when a local pass — the `activity` filter or the
+ * `query` re-rank — needs the whole matched set rather than one page. `/parks`
+ * has no activity param and returns no relevance order, so both passes are only
+ * honest over the full set matched by query/stateCode — one request covers it
+ * (474 sites service-wide as of 2026-07; the API caps nothing and returns
+ * min(limit, total)). query and stateCode still narrow upstream first (NPS `q`
+ * alone cuts "yosemite" to 3 matches), so the full-catalog fetch is the worst
  * case, not the common one. Paired with `start: 0`: an upstream offset combined
- * with a local filter silently skips records, so the two must never co-occur.
+ * with a local pass silently skips records before the filter/ranker sees them,
+ * so the two must never co-occur.
  */
-const ACTIVITY_FILTER_FETCH_LIMIT = 1000;
+const LOCAL_PROCESSING_FETCH_LIMIT = 1000;
 
 export const npsFindParks = tool('nps_find_parks', {
   title: 'national-parks-mcp-server: find parks',
@@ -32,7 +38,7 @@ export const npsFindParks = tool('nps_find_parks', {
       .string()
       .optional()
       .describe(
-        'Free-text search across park names and descriptions (e.g. "yosemite", "civil war", "redwood"). Omit to browse by state. At least one of query or stateCode is recommended; with neither, returns the first page of all ~470 NPS sites.',
+        'Free-text search across park names and descriptions (e.g. "yosemite", "civil war", "redwood"). Results are re-ranked locally so an exact parkCode or name match leads: NPS returns matches in alphabetical-by-code order with no relevance ranking, so without this the obvious park can sit behind sites that only mention the term in their description. Omit to browse by state. At least one of query or stateCode is recommended; with neither, returns the first page of all ~470 NPS sites.',
       ),
     stateCode: z
       .string()
@@ -161,17 +167,20 @@ export const npsFindParks = tool('nps_find_parks', {
   ],
 
   async handler(input, ctx) {
-    // Two-mode fetch. A local filter and an upstream offset cannot compose —
-    // `start` would skip records upstream before `activity` ever saw them — so
-    // when filtering, pull the whole matched set from offset 0 and slice here.
-    // Unfiltered, `start`/`limit` pass straight through as the cheap page fetch.
+    // Two-mode fetch. A local pass — the activity filter or the query re-rank —
+    // cannot compose with an upstream offset: `start` would skip records upstream
+    // before the pass ever saw them. So when either is active, pull the whole
+    // matched set from offset 0 and slice here; with neither, `start`/`limit`
+    // pass straight through as the cheap page fetch.
     const activity = input.activity?.trim();
+    const query = input.query?.trim();
+    const localProcessing = Boolean(activity) || Boolean(query);
     const result = await getNpsService().findParks(
       {
         query: input.query,
         stateCode: input.stateCode,
-        limit: activity ? ACTIVITY_FILTER_FETCH_LIMIT : input.limit,
-        start: activity ? 0 : input.start,
+        limit: localProcessing ? LOCAL_PROCESSING_FETCH_LIMIT : input.limit,
+        start: localProcessing ? 0 : input.start,
       },
       ctx,
     );
@@ -185,17 +194,24 @@ export const npsFindParks = tool('nps_find_parks', {
       // the fetch limit and the filter only saw the first slice of it.
       const scannedWholeCorpus = result.data.length >= result.total;
       const needle = activity.toLowerCase();
-      const matched = parks.filter((p) =>
-        p.activities.some((a) => a.toLowerCase().includes(needle)),
-      );
-      total = matched.length;
-      parks = matched.slice(input.start, input.start + input.limit);
+      parks = parks.filter((p) => p.activities.some((a) => a.toLowerCase().includes(needle)));
+      total = parks.length;
       if (!scannedWholeCorpus) {
         notices.push(
           `Only the first ${result.data.length} of ${result.total} sites were scanned for activity="${activity}", so this is a best-effort match rather than every one — narrow with stateCode or query for an exhaustive result.`,
         );
       }
     }
+
+    // Re-rank the FULL matched set (not the page) so exact parkCode/name matches
+    // lead. NPS `/parks` is alphabetical-by-code with no relevance order, so an
+    // exact match can sit anywhere — even past the caller's page. Ranking the
+    // already-sliced page would bury it exactly as the raw upstream order does.
+    if (query) parks = rankByRelevance(parks, query);
+
+    // Slice locally when we pulled the whole set (filter and/or re-rank). The
+    // plain page path already returned exactly the requested window upstream.
+    if (localProcessing) parks = parks.slice(input.start, input.start + input.limit);
 
     const filters = [
       input.query ? `query="${input.query}"` : null,
@@ -268,7 +284,51 @@ export const npsFindParks = tool('nps_find_parks', {
 
 function formatActivities(p: NpsParkSummary): string {
   if (p.activities.length === 0) return '**Activities:** none listed';
-  const head = p.activities.slice(0, 8).join(', ');
-  const extra = p.activities.length > 8 ? ` + ${p.activities.length - 8} more` : '';
-  return `**Activities:** ${head}${extra}`;
+  // Render the full list — structuredContent carries every activity, so the text
+  // channel must too, or content[]-only clients silently see fewer of them.
+  return `**Activities:** ${p.activities.join(', ')}`;
+}
+
+/** Lowercase + strip diacritics + collapse whitespace, so a query compares
+ * against parkCode/fullName without an accent or spacing mismatch. */
+function normalizeForRank(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Relevance tier for a park against a normalized query — lower sorts first.
+ * A stable, transparent classification (no fabricated scores): an exact code or
+ * name match beats a name prefix, which beats the term elsewhere in the name,
+ * which beats a description-only match (the sites NPS returns because the term
+ * appears only in their description).
+ */
+function relevanceTier(park: NpsParkSummary, normQuery: string): number {
+  const code = normalizeForRank(park.parkCode);
+  const name = normalizeForRank(park.fullName);
+  if (code === normQuery) return 0; // exact parkCode ("zion" → zion)
+  if (name === normQuery) return 1; // exact full name
+  if (name.startsWith(normQuery)) return 2; // name prefix ("yosemite" → Yosemite National Park)
+  if (name.includes(normQuery)) return 3; // term elsewhere in the name ("canyon" → Bryce Canyon)
+  return 4; // description-only / other
+}
+
+/**
+ * Re-rank the matched set so exact code/name matches lead, preserving NPS's
+ * upstream order within each tier (stable sort keyed on the original index).
+ * Two parks that both start with the query (e.g. Glacier vs Glacier Bay) keep
+ * NPS's order — this surfaces name matches above description-only ones, it does
+ * not invent a finer relevance signal than the tiers express.
+ */
+function rankByRelevance(parks: NpsParkSummary[], query: string): NpsParkSummary[] {
+  const normQuery = normalizeForRank(query);
+  if (normQuery === '') return parks;
+  return parks
+    .map((park, index) => ({ park, index, tier: relevanceTier(park, normQuery) }))
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((entry) => entry.park);
 }

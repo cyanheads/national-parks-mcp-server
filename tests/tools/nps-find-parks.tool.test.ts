@@ -119,6 +119,16 @@ describe('nps_find_parks', () => {
     expect(text).toContain('37.85');
   });
 
+  it('format() renders the full activity list, not a head-8 (structured/text parity)', () => {
+    // structuredContent carries every activity; the text channel used to cap at 8
+    // ("+ N more"), silently showing content[]-only clients fewer than exist.
+    const activities = Array.from({ length: 13 }, (_, i) => `Activity ${i + 1}`);
+    const blocks = npsFindParks.format!({ parks: [makePark({ activities })] });
+    const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    for (const a of activities) expect(text).toContain(a);
+    expect(text).not.toMatch(/\+ \d+ more/);
+  });
+
   /* ----------------------------------------------------------------------- *
    * #1 — local filter vs. pagination
    * ----------------------------------------------------------------------- */
@@ -250,5 +260,94 @@ describe('nps_find_parks', () => {
     // No corpus pull, no filter, no bogus activity echo.
     expect(findParks).toHaveBeenCalledWith(expect.objectContaining({ limit: 10 }), ctx);
     expect(getEnrichment(ctx).appliedFilters).not.toMatch(/activity/);
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * #4 — relevance ranking
+   * ----------------------------------------------------------------------- */
+
+  it('fetches the whole matched set from offset 0 when a query is set (to rank it)', async () => {
+    findParks.mockResolvedValueOnce({ total: 3, data: [makePark()] });
+    const input = npsFindParks.input.parse({ query: 'yosemite', limit: 5, start: 0 });
+    await npsFindParks.handler(input, ctx);
+
+    // A query needs the full set ranked before the page is sliced — never the
+    // caller's limit, never a non-zero start passed upstream.
+    expect(findParks).toHaveBeenCalledWith(
+      expect.objectContaining({ query: 'yosemite', limit: 1000, start: 0 }),
+      ctx,
+    );
+  });
+
+  it('ranks the exact name match ahead of description-only matches (the "yosemite" bug)', async () => {
+    // Live upstream order is alphabetical-by-code: depo, wrst, yose — only yose
+    // matches in its name; the other two match on their description alone.
+    findParks.mockResolvedValueOnce({
+      total: 3,
+      data: [
+        makePark({ parkCode: 'depo', fullName: 'Devils Postpile National Monument' }),
+        makePark({ parkCode: 'wrst', fullName: 'Wrangell - St Elias National Park & Preserve' }),
+        makePark({ parkCode: 'yose', fullName: 'Yosemite National Park' }),
+      ],
+    });
+    const input = npsFindParks.input.parse({ query: 'yosemite' });
+    const result = await npsFindParks.handler(input, ctx);
+
+    expect(result.parks.map((p) => p.parkCode)).toEqual(['yose', 'depo', 'wrst']);
+  });
+
+  it('orders by tier: exact code > exact name > name prefix > name substring > description', async () => {
+    // Scrambled upstream; the ranker sorts into strict tier order, preserving
+    // upstream order within a tier.
+    findParks.mockResolvedValueOnce({
+      total: 5,
+      data: [
+        makePark({ parkCode: 'zzzz', fullName: 'Nowhere National Park' }), // desc-only (tier 4)
+        makePark({ parkCode: 'blca', fullName: 'Black Canyon of the Gunnison NP' }), // mid-name (tier 3)
+        makePark({ parkCode: 'cany', fullName: 'Canyonlands National Park' }), // exact code (tier 0)
+        makePark({ parkCode: 'cdch', fullName: 'Canyon de Chelly National Monument' }), // prefix (tier 2)
+        makePark({ parkCode: 'xxxx', fullName: 'Cany' }), // exact name (tier 1)
+      ],
+    });
+    const input = npsFindParks.input.parse({ query: 'cany', limit: 10 });
+    const result = await npsFindParks.handler(input, ctx);
+
+    expect(result.parks.map((p) => p.parkCode)).toEqual(['cany', 'xxxx', 'cdch', 'blca', 'zzzz']);
+  });
+
+  it('preserves upstream order within a tier (two parks both prefixing the query)', async () => {
+    // "glacier" → both Glacier Bay and Glacier start with the term; neither wins
+    // on a finer signal, so NPS's order (glba before glac) is kept.
+    findParks.mockResolvedValueOnce({
+      total: 3,
+      data: [
+        makePark({ parkCode: 'cajo', fullName: 'Captain John Smith Chesapeake NHT' }), // desc-only
+        makePark({ parkCode: 'glba', fullName: 'Glacier Bay National Park & Preserve' }), // prefix
+        makePark({ parkCode: 'glac', fullName: 'Glacier National Park' }), // prefix
+      ],
+    });
+    const input = npsFindParks.input.parse({ query: 'glacier' });
+    const result = await npsFindParks.handler(input, ctx);
+
+    expect(result.parks.map((p) => p.parkCode)).toEqual(['glba', 'glac', 'cajo']);
+  });
+
+  it('surfaces an exact match sitting beyond the first page (ranks the full set, not the page)', async () => {
+    // Mirrors "grand canyon": 12 description-only sites sort alphabetically ahead
+    // of grca, so a page-scoped rank (limit 10) would never see the name match and
+    // grca would land on page 2. Ranking the whole matched set surfaces it to #1.
+    const descOnly = Array.from({ length: 12 }, (_, i) =>
+      makePark({ parkCode: `d${String(i).padStart(3, '0')}`, fullName: `Bandelier Site ${i}` }),
+    );
+    const grca = makePark({ parkCode: 'grca', fullName: 'Grand Canyon National Park' });
+    findParks.mockResolvedValueOnce({ total: 13, data: [...descOnly, grca] });
+    const input = npsFindParks.input.parse({ query: 'grand canyon', limit: 10 });
+    const result = await npsFindParks.handler(input, ctx);
+
+    expect(result.parks).toHaveLength(10);
+    expect(result.parks[0].parkCode).toBe('grca');
+    expect(getEnrichment(ctx).totalCount).toBe(13);
+    // A page-only ranker would have returned the 12 desc sites and hidden grca.
+    expect(result.parks.map((p) => p.parkCode)).not.toContain('d011');
   });
 });

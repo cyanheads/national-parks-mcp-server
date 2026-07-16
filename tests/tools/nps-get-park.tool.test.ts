@@ -112,4 +112,38 @@ describe('nps_get_park', () => {
     expect(text).toContain('35.00');
     expect(text).toContain('El Capitan');
   });
+
+  it('format() renders EVERY returned image and discloses the upstream cap', () => {
+    // Structured content carries up to 5 images; the text channel must render all
+    // of them (not just the first) and disclose that more exist upstream.
+    const images = Array.from({ length: 5 }, (_, i) => ({
+      url: `https://img/${i}.jpg`,
+      altText: `alt ${i}`,
+      title: `Image ${i}`,
+    }));
+    const blocks = npsGetPark.format!({
+      parks: [makeDetail({ images, imagesTruncated: true })],
+    });
+    const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    for (const img of images) {
+      expect(text).toContain(img.title);
+      expect(text).toContain(img.url);
+    }
+    // The disclosure fires because imagesTruncated is true.
+    expect(text).toMatch(/more images upstream/i);
+  });
+
+  it('format() renders every image but omits the disclosure when not truncated', () => {
+    const images = [
+      { url: 'https://img/a.jpg', altText: 'a', title: 'Image A' },
+      { url: 'https://img/b.jpg', altText: 'b', title: 'Image B' },
+    ];
+    const blocks = npsGetPark.format!({
+      parks: [makeDetail({ images, imagesTruncated: false })],
+    });
+    const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain('Image A');
+    expect(text).toContain('Image B');
+    expect(text).not.toMatch(/more images upstream/i);
+  });
 });

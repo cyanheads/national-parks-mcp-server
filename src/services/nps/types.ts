@@ -263,6 +263,10 @@ export interface NpsParkDetail {
   entrancePasses?: NpsFeeEntry[];
   fullName: string;
   images?: NpsParkImage[];
+  /** True when the upstream image list was longer than the returned cap
+   * (`MAX_IMAGES_PER_PARK`). Present only when the `images` section is included;
+   * the park's `url` is the path to the full set. */
+  imagesTruncated?: boolean;
   latitude: number | null;
   longitude: number | null;
   operatingHours?: NpsOperatingHours[];

@@ -130,7 +130,7 @@ describe('NpsService', () => {
   });
 
   describe('getParks', () => {
-    it('extracts topics/activities names, coerces detail, caps images at 5, honors fields', async () => {
+    it('extracts topics/activities names, coerces detail, caps images at 5 and flags the cap, honors fields', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({
           total: '1',
@@ -165,7 +165,44 @@ describe('NpsService', () => {
         { cost: '30.00', title: 'Vehicle', description: '7 days' },
       ]);
       expect(park.images).toHaveLength(5);
+      // 8 upstream > 5 cap → the disclosure flag is set. The first five URLs are
+      // kept in order; the caller learns the rest exist via the park url.
+      expect(park.imagesTruncated).toBe(true);
+      expect(park.images?.map((i) => i.url)).toEqual([
+        'https://img/0.jpg',
+        'https://img/1.jpg',
+        'https://img/2.jpg',
+        'https://img/3.jpg',
+        'https://img/4.jpg',
+      ]);
       expect(park.weatherOverview).toBe('Variable.');
+    });
+
+    it('leaves imagesTruncated false when the upstream image list is within the cap', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          data: [
+            {
+              parkCode: 'zion',
+              fullName: 'Zion National Park',
+              designation: 'National Park',
+              states: 'UT',
+              description: 'Sandstone canyons.',
+              url: 'https://www.nps.gov/zion/',
+              images: Array.from({ length: 3 }, (_, i) => ({
+                url: `https://img/${i}.jpg`,
+                altText: `alt ${i}`,
+                title: `title ${i}`,
+              })),
+            },
+          ],
+        }),
+      );
+
+      const park = (await service.getParks(['zion'], undefined, ctx))[0];
+      expect(park.images).toHaveLength(3);
+      expect(park.imagesTruncated).toBe(false);
     });
 
     it('omits sections excluded by fields', async () => {
@@ -190,6 +227,9 @@ describe('NpsService', () => {
       expect(park.activities).toBeUndefined();
       expect(park.entranceFees).toBeUndefined();
       expect(park.operatingHours).toEqual([]);
+      // images excluded → neither the list nor its truncation flag is populated.
+      expect(park.images).toBeUndefined();
+      expect(park.imagesTruncated).toBeUndefined();
     });
   });
 

@@ -162,7 +162,13 @@ export const npsGetPark = tool('nps_get_park', {
               )
               .optional()
               .describe(
-                'Representative park images (included unless fields excludes "images"). Capped at 5. May be empty.',
+                'Representative park images (included unless fields excludes "images"). Capped at 5; imagesTruncated flags when the park has more. May be empty.',
+              ),
+            imagesTruncated: z
+              .boolean()
+              .optional()
+              .describe(
+                'True when the park has more images upstream than the 5 returned here — open the park url for the full set. Present only when the images section is included.',
               ),
           })
           .describe('One park with its trip-planning detail.'),
@@ -243,12 +249,16 @@ export const npsGetPark = tool('nps_get_park', {
       if (p.latitude != null && p.longitude != null) {
         lines.push(`**Coordinates:** ${p.latitude}, ${p.longitude}`);
       }
-      const firstImage = p.images?.[0];
-      if (firstImage?.url) {
-        lines.push(
-          '',
-          `**Image — ${firstImage.title}:** ![${firstImage.altText}](${firstImage.url})`,
-        );
+      if (p.images?.length) {
+        lines.push('', '**Images:**');
+        for (const img of p.images) {
+          lines.push(`- ${img.title}: ![${img.altText}](${img.url})`);
+        }
+        if (p.imagesTruncated) {
+          lines.push(
+            '_The park has more images upstream than the representative set shown here — see the park page._',
+          );
+        }
       }
       if (p.url) lines.push('', `[Full park page](${p.url})`);
       lines.push('');

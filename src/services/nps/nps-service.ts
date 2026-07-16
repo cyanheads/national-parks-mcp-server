@@ -338,11 +338,16 @@ export class NpsService {
       };
     }
     if (include('images')) {
-      detail.images = (p.images ?? []).slice(0, MAX_IMAGES_PER_PARK).map((img) => ({
+      const allImages = p.images ?? [];
+      detail.images = allImages.slice(0, MAX_IMAGES_PER_PARK).map((img) => ({
         url: img.url ?? '',
         altText: img.altText ?? img.caption ?? '',
         title: img.title ?? '',
       }));
+      // Disclose when the upstream list outran the cap. The park's `url` is the
+      // "see the rest" path, so a boolean is the whole honest contract — no
+      // image-pagination surface needed.
+      detail.imagesTruncated = allImages.length > MAX_IMAGES_PER_PARK;
     }
 
     return detail;
