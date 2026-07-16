@@ -162,6 +162,9 @@ export interface NpsThingToDoRaw {
 export interface NpsEventRaw {
   category?: string;
   dateend?: string;
+  /** Every occurrence date (YYYY-MM-DD) NPS still lists — from today through
+   * `recurrencedateend`, independent of the requested window. */
+  dates?: string[];
   datestart?: string;
   description?: string;
   eventid?: string;
@@ -169,6 +172,8 @@ export interface NpsEventRaw {
   id?: string;
   infourl?: string;
   isfree?: string;
+  /** "true"/"false" — whether this event is a recurring series. */
+  isrecurring?: string;
   location?: string;
   regresurl?: string;
   sitecode?: string;
@@ -354,7 +359,12 @@ export interface NpsEvent {
   id: string;
   infoUrl: string | null;
   isFree: boolean;
+  /** True when this is a recurring series (multiple occurrence dates). */
+  isRecurring: boolean;
   location: string | null;
+  /** Occurrence dates (YYYY-MM-DD) intersected with the requested window; all
+   * remaining occurrences when no window was requested. See NpsService.normalizeEvent. */
+  occurrenceDates: string[];
   parkCode: string | null;
   registrationUrl: string | null;
   times: NpsEventTime[];

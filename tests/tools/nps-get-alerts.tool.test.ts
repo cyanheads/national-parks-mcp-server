@@ -396,4 +396,30 @@ describe('nps_get_alerts', () => {
 
     expect(getEnrichment(ctx).categoryBreakdown).toBe('Park Closure: 1, Information: 1');
   });
+
+  /* ----------------------------------------------------------------------- *
+   * #3 — invalid code inputs surface the declared recovery hint (not raw Zod)
+   * ----------------------------------------------------------------------- */
+
+  it('rejects a non-lowercase parkCode with the declared recovery hint, before any upstream call', async () => {
+    const input = npsGetAlerts.input.parse({ parkCode: 'Yose' });
+    await expect(npsGetAlerts.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'invalid_park_code',
+        recovery: { hint: expect.stringContaining('nps_find_parks') },
+      },
+    });
+    expect(getAlerts).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-two-letter stateCode with the declared recovery hint', async () => {
+    const input = npsGetAlerts.input.parse({ stateCode: 'Montana' });
+    await expect(npsGetAlerts.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'invalid_state_code',
+        recovery: { hint: expect.stringContaining('two-letter') },
+      },
+    });
+    expect(getAlerts).not.toHaveBeenCalled();
+  });
 });

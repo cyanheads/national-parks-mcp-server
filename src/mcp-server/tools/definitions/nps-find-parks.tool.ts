@@ -42,7 +42,6 @@ export const npsFindParks = tool('nps_find_parks', {
       ),
     stateCode: z
       .string()
-      .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
       .optional()
       .describe(
         'Two-letter US state/territory code, or comma-separated list (e.g. "CA", "WY,MT,ID"). Filters to parks located in those states. Combine with query to narrow.',
@@ -167,6 +166,17 @@ export const npsFindParks = tool('nps_find_parks', {
   ],
 
   async handler(input, ctx) {
+    // Code-format validation runs HERE, not at the Zod schema edge — a schema-level
+    // regex failure throws a raw ZodError before ctx.fail exists, so the declared
+    // recovery hint would never reach the client (#3).
+    if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
+      throw ctx.fail(
+        'invalid_state_code',
+        `stateCode "${input.stateCode}" must be two-letter code(s), comma-separated.`,
+        { ...ctx.recoveryFor('invalid_state_code') },
+      );
+    }
+
     // Two-mode fetch. A local pass — the activity filter or the query re-rank —
     // cannot compose with an upstream offset: `start` would skip records upstream
     // before the pass ever saw them. So when either is active, pull the whole

@@ -36,14 +36,12 @@ export const npsGetAlerts = tool('nps_get_alerts', {
   input: z.object({
     parkCode: z
       .string()
-      .regex(/^[a-z]{4}(,[a-z]{4})*$/)
       .optional()
       .describe(
-        'Park code, or comma-separated list (e.g. "glac", "yose,zion"). Get codes from nps_find_parks. Provide parkCode or stateCode; with neither, returns recent alerts service-wide.',
+        'Park code, or comma-separated list (e.g. "glac", "yose,zion") — 4-letter lowercase codes. Get codes from nps_find_parks. Provide parkCode or stateCode; with neither, returns recent alerts service-wide.',
       ),
     stateCode: z
       .string()
-      .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
       .optional()
       .describe(
         'Two-letter state code, or comma-separated list (e.g. "MT", "WY,MT,ID"). Returns alerts for all NPS sites in those states — use for a statewide sweep rather than one park.',
@@ -161,6 +159,24 @@ export const npsGetAlerts = tool('nps_get_alerts', {
   ],
 
   async handler(input, ctx) {
+    // Code-format validation runs HERE, not at the Zod schema edge — a schema-level
+    // regex failure throws a raw ZodError before ctx.fail exists, so the declared
+    // recovery hint would never reach the client (#3).
+    if (input.parkCode && !input.parkCode.split(',').every((t) => /^[a-z]{4}$/.test(t))) {
+      throw ctx.fail(
+        'invalid_park_code',
+        `parkCode "${input.parkCode}" must be 4-letter lowercase code(s), comma-separated.`,
+        { ...ctx.recoveryFor('invalid_park_code') },
+      );
+    }
+    if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
+      throw ctx.fail(
+        'invalid_state_code',
+        `stateCode "${input.stateCode}" must be two-letter code(s), comma-separated.`,
+        { ...ctx.recoveryFor('invalid_state_code') },
+      );
+    }
+
     // Two-mode fetch. A local filter and an upstream offset cannot compose —
     // `start` would skip records upstream before `category` ever saw them — so
     // when filtering, pull the whole matched set from offset 0 and slice here.

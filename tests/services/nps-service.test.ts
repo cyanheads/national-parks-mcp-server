@@ -518,6 +518,118 @@ describe('NpsService', () => {
       expect(e.registrationUrl).toBeNull();
       expect(e.infoUrl).toBe('https://www.nps.gov/yell/event');
       expect(e.times).toEqual([{ timeStart: '02:00 PM', timeEnd: '02:30 PM' }]);
+      // Sparse payload: dates[]/isrecurring omitted upstream → safe defaults.
+      expect(e.occurrenceDates).toEqual([]);
+      expect(e.isRecurring).toBe(false);
+    });
+
+    it('intersects dates[] with the requested window and exposes isRecurring', async () => {
+      // dates[] spans the full recurrence range (Jul–Sep) independent of the
+      // requested window; the service keeps only the in-window occurrences.
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          pagenumber: '1',
+          pagesize: '15',
+          errors: [],
+          data: [
+            {
+              id: 'e2',
+              eventid: '134460',
+              title: 'Old Faithful Talk',
+              sitecode: 'yell',
+              description: 'A recurring series.',
+              isrecurring: 'true',
+              datestart: '2026-05-24',
+              dateend: '2026-05-24',
+              recurrencedatestart: '2026-05-24',
+              recurrencedateend: '2026-09-26',
+              dates: ['2026-07-16', '2026-08-01', '2026-08-15', '2026-09-26'],
+              isfree: 'true',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.findEvents(
+        {
+          parkCode: 'yell',
+          dateStart: '2026-08-01',
+          dateEnd: '2026-08-31',
+          pageSize: 15,
+          pageNumber: 1,
+        },
+        ctx,
+      );
+      const e = result.data[0];
+      expect(e.isRecurring).toBe(true);
+      expect(e.occurrenceDates).toEqual(['2026-08-01', '2026-08-15']);
+      // The record's own anchor date is untouched (the field #2 is about).
+      expect(e.dateStart).toBe('2026-05-24');
+    });
+
+    it('reduces occurrenceDates to the full remaining list when no window is requested', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          errors: [],
+          data: [
+            {
+              id: 'e3',
+              eventid: '134460',
+              title: 'Series',
+              sitecode: 'yell',
+              isrecurring: 'true',
+              datestart: '2026-05-24',
+              dateend: '2026-05-24',
+              dates: ['2026-07-16', '2026-08-01', '2026-09-26'],
+              isfree: 'false',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.findEvents(
+        { parkCode: 'yell', pageSize: 15, pageNumber: 1 },
+        ctx,
+      );
+      expect(result.data[0].occurrenceDates).toEqual(['2026-07-16', '2026-08-01', '2026-09-26']);
+      expect(result.data[0].isRecurring).toBe(true);
+    });
+
+    it('a non-recurring event carries isRecurring false and its single date', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          errors: [],
+          data: [
+            {
+              id: 'e4',
+              eventid: '131081',
+              title: 'One-off',
+              sitecode: 'inde',
+              isrecurring: 'false',
+              datestart: '2026-07-18',
+              dateend: '2026-07-18',
+              dates: ['2026-07-18'],
+              isfree: 'true',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.findEvents(
+        {
+          parkCode: 'inde',
+          dateStart: '2026-07-01',
+          dateEnd: '2026-07-31',
+          pageSize: 15,
+          pageNumber: 1,
+        },
+        ctx,
+      );
+      expect(result.data[0].isRecurring).toBe(false);
+      expect(result.data[0].occurrenceDates).toEqual(['2026-07-18']);
     });
 
     it('surfaces a non-empty envelope errors[] in the result', async () => {

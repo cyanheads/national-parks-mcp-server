@@ -19,14 +19,12 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
   input: z.object({
     parkCode: z
       .string()
-      .regex(/^[a-z]{4}(,[a-z]{4})*$/)
       .optional()
       .describe(
-        'Park code, or comma-separated list (e.g. "zion"). Get codes from nps_find_parks. Provide parkCode or stateCode.',
+        'Park code, or comma-separated list (e.g. "zion") — 4-letter lowercase codes. Get codes from nps_find_parks. Provide parkCode or stateCode.',
       ),
     stateCode: z
       .string()
-      .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
       .optional()
       .describe(
         'Two-letter state code, or comma-separated list. Returns campgrounds across all NPS sites in those states.',
@@ -149,6 +147,24 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
   ],
 
   async handler(input, ctx) {
+    // Code-format validation runs HERE, not at the Zod schema edge — a schema-level
+    // regex failure throws a raw ZodError before ctx.fail exists, so the declared
+    // recovery hint would never reach the client (#3).
+    if (input.parkCode && !input.parkCode.split(',').every((t) => /^[a-z]{4}$/.test(t))) {
+      throw ctx.fail(
+        'invalid_park_code',
+        `parkCode "${input.parkCode}" must be 4-letter lowercase code(s), comma-separated.`,
+        { ...ctx.recoveryFor('invalid_park_code') },
+      );
+    }
+    if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
+      throw ctx.fail(
+        'invalid_state_code',
+        `stateCode "${input.stateCode}" must be two-letter code(s), comma-separated.`,
+        { ...ctx.recoveryFor('invalid_state_code') },
+      );
+    }
+
     const result = await getNpsService().findCampgrounds(
       {
         query: input.query,

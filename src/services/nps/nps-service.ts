@@ -260,7 +260,7 @@ export class NpsService {
       : [];
     return {
       total: toInt(env.total) ?? env.data?.length ?? 0,
-      data: (env.data ?? []).map((e) => this.normalizeEvent(e)),
+      data: (env.data ?? []).map((e) => this.normalizeEvent(e, params.dateStart, params.dateEnd)),
       errors,
     };
   }
@@ -413,7 +413,20 @@ export class NpsService {
     };
   }
 
-  private normalizeEvent(e: NpsEventRaw): NpsEvent {
+  /**
+   * Normalize a raw `/events` record. `occurrenceDates` intersects the record's
+   * `dates[]` with the requested `[dateStart, dateEnd]` window: NPS returns
+   * `dates[]` as the remaining occurrences from today through `recurrencedateend`,
+   * NOT scoped to the query window (measured — byte-identical across windows), so
+   * exposing it raw would relabel out-of-window dates as matches. YYYY-MM-DD
+   * strings compare lexicographically = chronologically; with neither bound this
+   * reduces to the full remaining-occurrence list. `dateStart`/`dateEnd` stay the
+   * record's own anchor (a recurring series' first date) — the field #2 is about.
+   */
+  private normalizeEvent(e: NpsEventRaw, dateStart?: string, dateEnd?: string): NpsEvent {
+    const occurrenceDates = (e.dates ?? []).filter(
+      (d) => (!dateStart || d >= dateStart) && (!dateEnd || d <= dateEnd),
+    );
     return {
       id: e.id ?? e.eventid ?? '',
       title: e.title ?? '',
@@ -422,6 +435,8 @@ export class NpsService {
       location: emptyToNull(e.location),
       dateStart: emptyToNull(e.datestart),
       dateEnd: emptyToNull(e.dateend),
+      occurrenceDates,
+      isRecurring: toBool(e.isrecurring),
       times: (e.times ?? [])
         .filter((t) => t.timestart || t.timeend)
         .map((t) => ({ timeStart: t.timestart ?? '', timeEnd: t.timeend ?? '' })),

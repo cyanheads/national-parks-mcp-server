@@ -124,4 +124,30 @@ describe('nps_find_campgrounds', () => {
     expect(text).toContain('176 reservable');
     expect(text).toMatch(/RV allowed: No/);
   });
+
+  /* ----------------------------------------------------------------------- *
+   * #3 — invalid code inputs surface the declared recovery hint (not raw Zod)
+   * ----------------------------------------------------------------------- */
+
+  it('rejects an uppercase parkCode with the declared recovery hint, before any upstream call', async () => {
+    const input = npsFindCampgrounds.input.parse({ parkCode: 'ZION' });
+    await expect(npsFindCampgrounds.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'invalid_park_code',
+        recovery: { hint: expect.stringContaining('nps_find_parks') },
+      },
+    });
+    expect(findCampgrounds).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-two-letter stateCode with the declared recovery hint', async () => {
+    const input = npsFindCampgrounds.input.parse({ stateCode: 'Utah' });
+    await expect(npsFindCampgrounds.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'invalid_state_code',
+        recovery: { hint: expect.stringContaining('two-letter') },
+      },
+    });
+    expect(findCampgrounds).not.toHaveBeenCalled();
+  });
 });

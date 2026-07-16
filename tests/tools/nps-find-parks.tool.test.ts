@@ -350,4 +350,26 @@ describe('nps_find_parks', () => {
     // A page-only ranker would have returned the 12 desc sites and hidden grca.
     expect(result.parks.map((p) => p.parkCode)).not.toContain('d011');
   });
+
+  /* ----------------------------------------------------------------------- *
+   * #3 — invalid stateCode surfaces the declared recovery hint (not raw Zod)
+   * ----------------------------------------------------------------------- */
+
+  it('rejects a non-two-letter stateCode with the declared recovery hint, before any upstream call', async () => {
+    const input = npsFindParks.input.parse({ stateCode: 'California' });
+    await expect(npsFindParks.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'invalid_state_code',
+        recovery: { hint: expect.stringContaining('two-letter') },
+      },
+    });
+    expect(findParks).not.toHaveBeenCalled();
+  });
+
+  it('accepts a valid comma-separated stateCode list', async () => {
+    findParks.mockResolvedValueOnce({ total: 1, data: [makePark()] });
+    const input = npsFindParks.input.parse({ stateCode: 'WY,MT,ID' });
+    await npsFindParks.handler(input, ctx);
+    expect(findParks).toHaveBeenCalled();
+  });
 });

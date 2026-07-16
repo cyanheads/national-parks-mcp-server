@@ -18,17 +18,15 @@ export const npsFindEvents = tool('nps_find_events', {
   input: z.object({
     parkCode: z
       .string()
-      .regex(/^[a-z]{4}(,[a-z]{4})*$/)
       .optional()
       .describe(
-        'Park code, or comma-separated list (e.g. "yell"). Get codes from nps_find_parks. Provide parkCode or stateCode.',
+        'Park code, or comma-separated list (e.g. "yell") — 4-letter lowercase codes. Get codes from nps_find_parks. Provide parkCode or stateCode.',
       ),
     stateCode: z
       .string()
-      .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
       .optional()
       .describe(
-        'Two-letter state code, or comma-separated list. Returns events across NPS sites in those states.',
+        'Two-letter state code, or comma-separated list (e.g. "WY", "WY,MT,ID"). Returns events across NPS sites in those states.',
       ),
     dateStart: z
       .string()
@@ -80,8 +78,28 @@ export const npsFindEvents = tool('nps_find_events', {
               .string()
               .nullable()
               .describe('Event location within the park (free text), or null.'),
-            dateStart: z.string().nullable().describe('Event start date (YYYY-MM-DD), or null.'),
-            dateEnd: z.string().nullable().describe('Event end date (YYYY-MM-DD), or null.'),
+            dateStart: z
+              .string()
+              .nullable()
+              .describe(
+                'Event start date (YYYY-MM-DD), or null. For a recurring event this is the series anchor (its original first date), which can predate your requested window — use occurrenceDates for the dates that actually fall in the window.',
+              ),
+            dateEnd: z
+              .string()
+              .nullable()
+              .describe(
+                'Event end date (YYYY-MM-DD), or null. For a recurring event this is the anchor date, not the last occurrence — see occurrenceDates and isRecurring.',
+              ),
+            occurrenceDates: z
+              .array(z.string())
+              .describe(
+                'Occurrence dates (YYYY-MM-DD) that fall within the requested dateStart/dateEnd window. When no date window is requested, this lists every remaining occurrence from today through the series end. Empty when the window matches no occurrence. Trust this for "when does this actually happen?" — dateStart/dateEnd above are the record\'s anchor and can be stale for a long-running recurring series.',
+              ),
+            isRecurring: z
+              .boolean()
+              .describe(
+                'True when this is a recurring series (multiple occurrence dates). Explains why dateStart/dateEnd may show a single frozen anchor date while occurrenceDates carries the real dates.',
+              ),
             times: z
               .array(
                 z
@@ -141,9 +159,9 @@ export const npsFindEvents = tool('nps_find_events', {
     {
       reason: 'invalid_date',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'dateStart/dateEnd not YYYY-MM-DD, or dateEnd < dateStart.',
+      when: 'dateStart/dateEnd not YYYY-MM-DD, not a real calendar date (e.g. 2026-02-31), or dateEnd < dateStart.',
       recovery:
-        'Provide dates as YYYY-MM-DD with dateEnd on or after dateStart (e.g. dateStart "2026-07-04", dateEnd "2026-07-06").',
+        'Provide dates as real YYYY-MM-DD calendar dates with dateEnd on or after dateStart (e.g. dateStart "2026-07-04", dateEnd "2026-07-06").',
     },
     {
       reason: 'invalid_park_code',
@@ -152,10 +170,47 @@ export const npsFindEvents = tool('nps_find_events', {
       recovery:
         'Provide 4-letter lowercase park codes (e.g. "yell"), comma-separated. Look them up with nps_find_parks.',
     },
+    {
+      reason: 'invalid_state_code',
+      code: JsonRpcErrorCode.ValidationError,
+      when: "A stateCode token isn't two letters.",
+      recovery: 'Provide two-letter state codes (e.g. "WY"), comma-separated.',
+    },
   ],
 
   async handler(input, ctx) {
-    // Cross-field date validation the regex can't express (the regex guards format).
+    // Code and calendar validation runs HERE, not at the Zod schema edge: a
+    // schema-level regex/refine failure throws a raw ZodError before ctx.fail
+    // exists, so the declared recovery hints would never reach the client (#3, #8).
+    if (input.parkCode && !input.parkCode.split(',').every((t) => /^[a-z]{4}$/.test(t))) {
+      throw ctx.fail(
+        'invalid_park_code',
+        `parkCode "${input.parkCode}" must be 4-letter lowercase code(s), comma-separated.`,
+        { ...ctx.recoveryFor('invalid_park_code') },
+      );
+    }
+    if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
+      throw ctx.fail(
+        'invalid_state_code',
+        `stateCode "${input.stateCode}" must be two-letter code(s), comma-separated.`,
+        { ...ctx.recoveryFor('invalid_state_code') },
+      );
+    }
+    // "2026-02-31" passes the YYYY-MM-DD shape regex but isn't a real date — catch
+    // it before NPS 400s (#8). The schema regex guards shape; this guards the calendar.
+    if (input.dateStart && !isRealCalendarDate(input.dateStart)) {
+      throw ctx.fail(
+        'invalid_date',
+        `dateStart "${input.dateStart}" is not a real calendar date.`,
+        { ...ctx.recoveryFor('invalid_date') },
+      );
+    }
+    if (input.dateEnd && !isRealCalendarDate(input.dateEnd)) {
+      throw ctx.fail('invalid_date', `dateEnd "${input.dateEnd}" is not a real calendar date.`, {
+        ...ctx.recoveryFor('invalid_date'),
+      });
+    }
+    // Cross-field date validation the regex can't express.
     if (input.dateStart && input.dateEnd && input.dateEnd < input.dateStart) {
       throw ctx.fail(
         'invalid_date',
@@ -244,6 +299,13 @@ export const npsFindEvents = tool('nps_find_events', {
     for (const e of result.events) {
       lines.push(`### ${e.title}`);
       lines.push(`**ID:** ${e.id} | **When:** ${whenLine(e.dateStart, e.dateEnd, e.times)}`);
+      if (e.isRecurring) {
+        lines.push(
+          e.occurrenceDates.length > 0
+            ? `**Recurring event** — occurrence dates: ${e.occurrenceDates.join(', ')}`
+            : '**Recurring event** — no listed occurrences fall in the requested window; the date above is the series anchor, not an occurrence.',
+        );
+      }
       if (e.location) lines.push(`**Where:** ${e.location}`);
       if (e.category) lines.push(`**Category:** ${e.category}`);
       if (e.parkCode) lines.push(`**Park:** ${e.parkCode}`);
@@ -269,4 +331,19 @@ function whenLine(
       : (dateStart ?? dateEnd ?? 'date TBD');
   const slots = times.map((t) => `${t.timeStart}–${t.timeEnd}`).join(', ');
   return slots ? `${dateRange}, ${slots}` : dateRange;
+}
+
+/**
+ * True when a YYYY-MM-DD string is a real calendar date. JS `Date` silently rolls
+ * impossible components forward (Feb 31 → Mar 3), so build the date in UTC and
+ * confirm every component survives the round-trip — the standard, synchronous,
+ * dependency-free validity check. The schema regex has already guaranteed shape.
+ */
+function isRealCalendarDate(value: string): boolean {
+  const parts = value.split('-');
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return dt.getUTCFullYear() === year && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day;
 }
