@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.6](changelog/0.1.x/0.1.6.md) — 2026-08-23
+
+Adopts mcp-ts-core 0.12.3 and the MCP SDK v2 protocol surface, with explicit stateless HTTP serving, TypeScript 7 test typechecking, current framework tooling, and Bun 1.4 container builds.
+
 ## [0.1.5](changelog/0.1.x/0.1.5.md) — 2026-07-16
 
 nps_find_events adds window-intersected occurrenceDates and isRecurring so a recurring series no longer reads as its frozen anchor date; invalid parkCode/stateCode now return the tool's declared recovery hint (format checks moved into the handler across four tools), and impossible calendar dates are rejected client-side.

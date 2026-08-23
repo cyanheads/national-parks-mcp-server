@@ -1,10 +1,9 @@
 # national-parks-mcp-server - Directory Structure
 
-Generated on: 2026-07-16 09:12:13
+Generated on: 2026-08-23 21:25:28
 
 ```text
 national-parks-mcp-server/
-├── .claude/
 ├── .claude-plugin/
 │   └── plugin.json
 ├── .codex-plugin/
@@ -15,6 +14,8 @@ national-parks-mcp-server/
 │   │   ├── bug_report.yml
 │   │   ├── config.yml
 │   │   └── feature_request.yml
+│   ├── CODE_OF_CONDUCT.md
+│   ├── CONTRIBUTING.md
 │   ├── FUNDING.yml
 │   └── SECURITY.md
 ├── .vscode/
