@@ -43,7 +43,7 @@ function makeResult(overrides?: Partial<NpsEventsResult>): NpsEventsResult {
 }
 
 describe('nps_find_events', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof createMockContext<typeof npsFindEvents.errors>>;
   const findEvents = vi.fn();
 
   beforeEach(() => {
@@ -62,7 +62,7 @@ describe('nps_find_events', () => {
     const result = await npsFindEvents.handler(input, ctx);
 
     expect(result.events).toHaveLength(1);
-    expect(result.events[0].parkCode).toBe('yell');
+    expect(result.events[0]!.parkCode).toBe('yell');
     expect(getEnrichment(ctx).totalCount).toBe(1);
   });
 
@@ -108,8 +108,8 @@ describe('nps_find_events', () => {
     );
     const input = npsFindEvents.input.parse({ stateCode: 'WY' });
     const result = await npsFindEvents.handler(input, ctx);
-    expect(result.events[0].parkCode).toBeNull();
-    expect(result.events[0].times).toEqual([]);
+    expect(result.events[0]!.parkCode).toBeNull();
+    expect(result.events[0]!.times).toEqual([]);
   });
 
   it('format() renders the id, when-line, and fee', () => {
@@ -219,10 +219,10 @@ describe('nps_find_events', () => {
       dateEnd: '2026-08-31',
     });
     const result = await npsFindEvents.handler(input, ctx);
-    expect(result.events[0].isRecurring).toBe(true);
-    expect(result.events[0].occurrenceDates).toEqual(['2026-08-01', '2026-08-08']);
+    expect(result.events[0]!.isRecurring).toBe(true);
+    expect(result.events[0]!.occurrenceDates).toEqual(['2026-08-01', '2026-08-08']);
     // dateStart stays the record's anchor (the misleading May value #2 is about).
-    expect(result.events[0].dateStart).toBe('2026-05-24');
+    expect(result.events[0]!.dateStart).toBe('2026-05-24');
   });
 
   it('format() renders the recurring marker and the occurrence dates', () => {

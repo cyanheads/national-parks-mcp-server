@@ -37,7 +37,7 @@ function makeActivity(overrides?: Partial<NpsThingToDo>): NpsThingToDo {
 }
 
 describe('nps_get_activities', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof createMockContext<typeof npsGetActivities.errors>>;
   const getThingsToDo = vi.fn();
 
   beforeEach(() => {
@@ -52,7 +52,7 @@ describe('nps_get_activities', () => {
     const result = await npsGetActivities.handler(input, ctx);
 
     expect(result.activities).toHaveLength(1);
-    expect(result.activities[0].title).toMatch(/Sunrise/);
+    expect(result.activities[0]!.title).toMatch(/Sunrise/);
     expect(getEnrichment(ctx).totalCount).toBe(1);
   });
 
@@ -80,8 +80,8 @@ describe('nps_get_activities', () => {
     });
     const input = npsGetActivities.input.parse({ stateCode: 'ME' });
     const result = await npsGetActivities.handler(input, ctx);
-    expect(result.activities[0].parkCode).toBeNull();
-    expect(result.activities[0].duration).toBeNull();
+    expect(result.activities[0]!.parkCode).toBeNull();
+    expect(result.activities[0]!.duration).toBeNull();
   });
 
   it('format() renders the id and reservation/pets flags (incl. negatives)', () => {

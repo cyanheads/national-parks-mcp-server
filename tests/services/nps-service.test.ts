@@ -22,9 +22,6 @@ vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
   fetchWithTimeout: (...args: unknown[]) => mockFetch(...args),
   // Pass-through retry so a thrown error from the mock propagates immediately.
   withRetry: async (fn: () => Promise<unknown>) => fn(),
-  requestContextService: {
-    createRequestContext: (fields: Record<string, unknown>) => ({ ...fields }),
-  },
 }));
 
 /** OK JSON response. */
@@ -94,7 +91,7 @@ describe('NpsService', () => {
       const result = await service.findParks({ query: 'yosemite', limit: 10 }, ctx);
 
       expect(result.total).toBe(2);
-      const park = result.data[0];
+      const park = result.data[0]!;
       expect(park.latitude).toBeCloseTo(37.84883288);
       expect(park.longitude).toBeCloseTo(-119.5571873);
       expect(park.activities).toEqual(['Hiking', 'Camping']);
@@ -121,7 +118,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const park = (await service.findParks({ limit: 10 }, ctx)).data[0];
+      const park = (await service.findParks({ limit: 10 }, ctx)).data[0]!;
       expect(park.latitude).toBeNull();
       expect(park.longitude).toBeNull();
       expect(park.activities).toEqual([]);
@@ -158,7 +155,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const park = (await service.getParks(['havo'], undefined, ctx))[0];
+      const park = (await service.getParks(['havo'], undefined, ctx))[0]!;
       expect(park.activities).toEqual(['Hiking']);
       expect(park.topics).toEqual(['Volcanoes']);
       expect(park.entranceFees).toEqual([
@@ -200,7 +197,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const park = (await service.getParks(['zion'], undefined, ctx))[0];
+      const park = (await service.getParks(['zion'], undefined, ctx))[0]!;
       expect(park.images).toHaveLength(3);
       expect(park.imagesTruncated).toBe(false);
     });
@@ -223,7 +220,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const park = (await service.getParks(['havo'], ['hours'], ctx))[0];
+      const park = (await service.getParks(['havo'], ['hours'], ctx))[0]!;
       expect(park.activities).toBeUndefined();
       expect(park.entranceFees).toBeUndefined();
       expect(park.operatingHours).toEqual([]);
@@ -252,7 +249,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const alert = (await service.getAlerts({ parkCode: 'glac', limit: 20 }, ctx)).data[0];
+      const alert = (await service.getAlerts({ parkCode: 'glac', limit: 20 }, ctx)).data[0]!;
       expect(alert.url).toBeNull();
       expect(alert.lastIndexedDate).toBe('2026-05-30');
       expect(alert.category).toBe('Park Closure');
@@ -262,7 +259,7 @@ describe('NpsService', () => {
       mockFetch.mockResolvedValueOnce(okResponse({ total: '58', data: [] }));
       await service.getAlerts({ stateCode: 'CA', limit: 20, start: 40 }, ctx);
 
-      const url = mockFetch.mock.calls[0]?.[0] as string;
+      const url = mockFetch.mock.calls[0]![0]! as string;
       expect(url).toContain('start=40');
       expect(url).toContain('limit=20');
     });
@@ -271,7 +268,7 @@ describe('NpsService', () => {
       mockFetch.mockResolvedValueOnce(okResponse({ total: '0', data: [] }));
       await service.getAlerts({ parkCode: 'glac', limit: 20 }, ctx);
 
-      const url = mockFetch.mock.calls[0]?.[0] as string;
+      const url = mockFetch.mock.calls[0]![0]! as string;
       expect(url).not.toContain('start=');
     });
   });
@@ -308,7 +305,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const cg = (await service.findCampgrounds({ parkCode: 'zion', limit: 15 }, ctx)).data[0];
+      const cg = (await service.findCampgrounds({ parkCode: 'zion', limit: 15 }, ctx)).data[0]!;
       expect(cg.totalSites).toBe(176);
       expect(cg.reservableSites).toBe(176);
       expect(cg.firstComeSites).toBe(0);
@@ -348,7 +345,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const cg = (await service.findCampgrounds({ parkCode: 'grca', limit: 15 }, ctx)).data[0];
+      const cg = (await service.findCampgrounds({ parkCode: 'grca', limit: 15 }, ctx)).data[0]!;
       expect(cg.amenities.showers).toBe(true);
       expect(cg.amenities.toilets).toBe(true);
       expect(cg.amenities.potableWater).toBe(true);
@@ -377,7 +374,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const cg = (await service.findCampgrounds({ parkCode: 'zion', limit: 15 }, ctx)).data[0];
+      const cg = (await service.findCampgrounds({ parkCode: 'zion', limit: 15 }, ctx)).data[0]!;
       expect(cg.amenities.potableWater).toBe(false);
       expect(cg.amenities.showers).toBe(false);
       expect(cg.amenities.toilets).toBe(false);
@@ -403,7 +400,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const cg = (await service.findCampgrounds({ parkCode: 'zion', limit: 15 }, ctx)).data[0];
+      const cg = (await service.findCampgrounds({ parkCode: 'zion', limit: 15 }, ctx)).data[0]!;
       expect(cg.totalSites).toBeNull();
       expect(cg.reservableSites).toBeNull();
       expect(cg.firstComeSites).toBeNull();
@@ -441,7 +438,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const t = (await service.getThingsToDo({ parkCode: 'acad', limit: 15 }, ctx)).data[0];
+      const t = (await service.getThingsToDo({ parkCode: 'acad', limit: 15 }, ctx)).data[0]!;
       expect(t.parkCode).toBe('acad');
       expect(t.shortDescription).toBe('See the first light from the summit.');
       expect(t.duration).toBe('1-3 Hours');
@@ -468,7 +465,7 @@ describe('NpsService', () => {
         }),
       );
 
-      const t = (await service.getThingsToDo({ stateCode: 'ME', limit: 15 }, ctx)).data[0];
+      const t = (await service.getThingsToDo({ stateCode: 'ME', limit: 15 }, ctx)).data[0]!;
       expect(t.parkCode).toBeNull();
     });
   });
@@ -510,7 +507,7 @@ describe('NpsService', () => {
       );
       expect(result.total).toBe(1);
       expect(result.errors).toEqual([]);
-      const e = result.data[0];
+      const e = result.data[0]!;
       expect(e.parkCode).toBe('yell');
       expect(e.description).toBe('Join a ranger for a talk.');
       expect(e.isFree).toBe(true);
@@ -561,7 +558,7 @@ describe('NpsService', () => {
         },
         ctx,
       );
-      const e = result.data[0];
+      const e = result.data[0]!;
       expect(e.isRecurring).toBe(true);
       expect(e.occurrenceDates).toEqual(['2026-08-01', '2026-08-15']);
       // The record's own anchor date is untouched (the field #2 is about).
@@ -593,8 +590,8 @@ describe('NpsService', () => {
         { parkCode: 'yell', pageSize: 15, pageNumber: 1 },
         ctx,
       );
-      expect(result.data[0].occurrenceDates).toEqual(['2026-07-16', '2026-08-01', '2026-09-26']);
-      expect(result.data[0].isRecurring).toBe(true);
+      expect(result.data[0]!.occurrenceDates).toEqual(['2026-07-16', '2026-08-01', '2026-09-26']);
+      expect(result.data[0]!.isRecurring).toBe(true);
     });
 
     it('a non-recurring event carries isRecurring false and its single date', async () => {
@@ -628,8 +625,8 @@ describe('NpsService', () => {
         },
         ctx,
       );
-      expect(result.data[0].isRecurring).toBe(false);
-      expect(result.data[0].occurrenceDates).toEqual(['2026-07-18']);
+      expect(result.data[0]!.isRecurring).toBe(false);
+      expect(result.data[0]!.occurrenceDates).toEqual(['2026-07-18']);
     });
 
     it('surfaces a non-empty envelope errors[] in the result', async () => {
@@ -657,7 +654,7 @@ describe('NpsService', () => {
       mockFetch.mockResolvedValueOnce(okResponse({ total: '0', data: [] }));
       await service.getParks(['yose', 'grca', 'zion'], ['activities'], ctx);
 
-      const url = mockFetch.mock.calls[0]?.[0] as string;
+      const url = mockFetch.mock.calls[0]![0]! as string;
       expect(url).toContain('parkCode=yose,grca,zion');
       expect(url).not.toContain('%2C');
     });
@@ -666,7 +663,7 @@ describe('NpsService', () => {
       mockFetch.mockResolvedValueOnce(okResponse({ total: '0', data: [] }));
       await service.getAlerts({ parkCode: 'yose,zion', stateCode: 'WY,MT', limit: 20 }, ctx);
 
-      const url = mockFetch.mock.calls[0]?.[0] as string;
+      const url = mockFetch.mock.calls[0]![0]! as string;
       expect(url).toContain('parkCode=yose,zion');
       expect(url).toContain('stateCode=WY,MT');
       expect(url).not.toContain('%2C');
@@ -676,7 +673,7 @@ describe('NpsService', () => {
       mockFetch.mockResolvedValueOnce(okResponse({ total: '0', data: [] }));
       await service.findParks({ query: 'civil war', limit: 10 }, ctx);
 
-      const url = mockFetch.mock.calls[0]?.[0] as string;
+      const url = mockFetch.mock.calls[0]![0]! as string;
       // URLSearchParams encodes a space as '+'; the point is it stays encoded.
       expect(url).toMatch(/q=civil(\+|%20)war/);
     });

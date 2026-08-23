@@ -33,7 +33,7 @@ function makeAlert(overrides?: Partial<NpsAlert>): NpsAlert {
 }
 
 describe('nps_get_alerts', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof createMockContext<typeof npsGetAlerts.errors>>;
   const getAlerts = vi.fn();
 
   beforeEach(() => {
@@ -98,8 +98,8 @@ describe('nps_get_alerts', () => {
     });
     const input = npsGetAlerts.input.parse({ parkCode: 'glac' });
     const result = await npsGetAlerts.handler(input, ctx);
-    expect(result.alerts[0].url).toBeNull();
-    expect(result.alerts[0].lastIndexedDate).toBeNull();
+    expect(result.alerts[0]!.url).toBeNull();
+    expect(result.alerts[0]!.lastIndexedDate).toBeNull();
   });
 
   it('format() leads with category and renders recency', () => {

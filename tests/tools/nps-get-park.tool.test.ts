@@ -44,7 +44,7 @@ function makeDetail(overrides?: Partial<NpsParkDetail>): NpsParkDetail {
 }
 
 describe('nps_get_park', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof createMockContext<typeof npsGetPark.errors>>;
   const getParks = vi.fn();
 
   beforeEach(() => {
@@ -59,7 +59,7 @@ describe('nps_get_park', () => {
     const result = await npsGetPark.handler(input, ctx);
 
     expect(result.parks).toHaveLength(1);
-    expect(result.parks[0].entranceFees).toEqual([
+    expect(result.parks[0]!.entranceFees).toEqual([
       { cost: '35.00', title: 'Vehicle', description: '7 days' },
     ]);
     expect(getEnrichment(ctx).requestedCount).toBe(1);
@@ -86,23 +86,22 @@ describe('nps_get_park', () => {
   });
 
   it('handles a sparse park (no optional sections) without throwing', async () => {
-    getParks.mockResolvedValueOnce([
-      makeDetail({
-        weatherOverview: null,
-        directionsInfo: null,
-        directionsUrl: null,
-        activities: undefined,
-        topics: undefined,
-        entranceFees: undefined,
-        entrancePasses: undefined,
-        operatingHours: undefined,
-        contacts: undefined,
-        images: undefined,
-      }),
-    ]);
+    const sparse = makeDetail({
+      weatherOverview: null,
+      directionsInfo: null,
+      directionsUrl: null,
+    });
+    delete sparse.activities;
+    delete sparse.topics;
+    delete sparse.entranceFees;
+    delete sparse.entrancePasses;
+    delete sparse.operatingHours;
+    delete sparse.contacts;
+    delete sparse.images;
+    getParks.mockResolvedValueOnce([sparse]);
     const input = npsGetPark.input.parse({ parkCode: ['yose'], fields: ['hours'] });
     const result = await npsGetPark.handler(input, ctx);
-    expect(result.parks[0].weatherOverview).toBeNull();
+    expect(result.parks[0]!.weatherOverview).toBeNull();
   });
 
   it('format() renders the park name, fees, and image title', () => {

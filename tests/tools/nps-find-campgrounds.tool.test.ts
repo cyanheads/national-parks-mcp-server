@@ -45,7 +45,7 @@ function makeCampground(overrides?: Partial<NpsCampground>): NpsCampground {
 }
 
 describe('nps_find_campgrounds', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof createMockContext<typeof npsFindCampgrounds.errors>>;
   const findCampgrounds = vi.fn();
 
   beforeEach(() => {
@@ -59,8 +59,8 @@ describe('nps_find_campgrounds', () => {
     const input = npsFindCampgrounds.input.parse({ parkCode: 'zion' });
     const result = await npsFindCampgrounds.handler(input, ctx);
 
-    expect(result.campgrounds[0].reservableSites).toBe(176);
-    expect(result.campgrounds[0].amenities.rvAllowed).toBe(true);
+    expect(result.campgrounds[0]!.reservableSites).toBe(176);
+    expect(result.campgrounds[0]!.amenities.rvAllowed).toBe(true);
     expect(getEnrichment(ctx).totalCount).toBe(1);
   });
 
@@ -109,8 +109,8 @@ describe('nps_find_campgrounds', () => {
     });
     const input = npsFindCampgrounds.input.parse({ parkCode: 'zion' });
     const result = await npsFindCampgrounds.handler(input, ctx);
-    expect(result.campgrounds[0].totalSites).toBeNull();
-    expect(result.campgrounds[0].amenities.rvAllowed).toBe(false);
+    expect(result.campgrounds[0]!.totalSites).toBeNull();
+    expect(result.campgrounds[0]!.amenities.rvAllowed).toBe(false);
   });
 
   it('format() renders the id, site split, and RV-allowed state (incl. No)', () => {

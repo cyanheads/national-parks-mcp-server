@@ -10,7 +10,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, serviceUnavailable, unauthorized } from '@cyanheads/mcp-ts-core/errors';
-import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type { ServerConfig } from '@/config/server-config.js';
 import type {
   NpsAlert,
@@ -460,15 +460,11 @@ export class NpsService {
    */
   private get<T>(path: string, query: URLSearchParams, ctx: Context): Promise<T> {
     const url = `${this.baseUrl}${path}?${this.encodeQuery(query)}`;
-    const reqCtx = requestContextService.createRequestContext({
-      operation: `NpsService.get ${path}`,
-      requestId: ctx.requestId,
-    });
     return withRetry(
       async () => {
         let response: Response;
         try {
-          response = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS, reqCtx, {
+          response = await fetchWithTimeout(url, REQUEST_TIMEOUT_MS, ctx, {
             signal: ctx.signal,
             headers: { 'X-Api-Key': this.apiKey, Accept: 'application/json' },
           });
@@ -483,7 +479,7 @@ export class NpsService {
       },
       {
         operation: `NpsService.get ${path}`,
-        context: reqCtx,
+        context: ctx,
         baseDelayMs: RETRY_BASE_DELAY_MS,
         signal: ctx.signal,
       },
@@ -520,6 +516,7 @@ export class NpsService {
     if (code === JsonRpcErrorCode.Unauthorized || code === JsonRpcErrorCode.Forbidden) {
       return unauthorized(
         'NPS API rejected the request (401/403) — NPS_API_KEY is likely missing or invalid. Get a free key at https://www.nps.gov/subjects/developer/get-started.htm.',
+        undefined,
         { cause: err },
       );
     }

@@ -34,7 +34,7 @@ function makePark(overrides?: Partial<NpsParkSummary>): NpsParkSummary {
 }
 
 describe('nps_find_parks', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof createMockContext<typeof npsFindParks.errors>>;
   const findParks = vi.fn();
 
   beforeEach(() => {
@@ -49,7 +49,7 @@ describe('nps_find_parks', () => {
     const result = await npsFindParks.handler(input, ctx);
 
     expect(result.parks).toHaveLength(1);
-    expect(result.parks[0].parkCode).toBe('yose');
+    expect(result.parks[0]!.parkCode).toBe('yose');
     expect(getEnrichment(ctx).totalCount).toBe(1);
   });
 
@@ -107,8 +107,8 @@ describe('nps_find_parks', () => {
     const input = npsFindParks.input.parse({ stateCode: 'WY' });
     const result = await npsFindParks.handler(input, ctx);
 
-    expect(result.parks[0].latitude).toBeNull();
-    expect(result.parks[0].entranceFee).toBeNull();
+    expect(result.parks[0]!.latitude).toBeNull();
+    expect(result.parks[0]!.entranceFee).toBeNull();
   });
 
   it('format() renders parkCode, fee, and coordinates', () => {
@@ -345,7 +345,7 @@ describe('nps_find_parks', () => {
     const result = await npsFindParks.handler(input, ctx);
 
     expect(result.parks).toHaveLength(10);
-    expect(result.parks[0].parkCode).toBe('grca');
+    expect(result.parks[0]!.parkCode).toBe('grca');
     expect(getEnrichment(ctx).totalCount).toBe(13);
     // A page-only ranker would have returned the 12 desc sites and hidden grca.
     expect(result.parks.map((p) => p.parkCode)).not.toContain('d011');
