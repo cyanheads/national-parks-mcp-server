@@ -18,6 +18,13 @@ import { initNpsService } from './services/nps/nps-service.js';
 await createApp({
   name: 'national-parks-mcp-server',
   title: 'national-parks-mcp-server',
+  /**
+   * Declared in source so the posture survives a deployment that forgets
+   * MCP_SESSION_MODE. No tool calls ctx.requestInput, so nothing here needs a
+   * session to answer back and `require: 'stateful'` would only add a startup
+   * failure mode. A meaningful MCP_SESSION_MODE still wins.
+   */
+  sessionMode: 'stateless',
   tools: [
     npsFindParks,
     npsGetPark,
