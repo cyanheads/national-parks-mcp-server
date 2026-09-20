@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.7-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -27,9 +27,11 @@
 
 ---
 
-## Tools
+## Overview
 
-Six tools shaped around the trip-planning workflow — resolve a park, then key the detail tools on its code:
+US National Park Service trip planning over the NPS Data API. Resolve a park to its `parkCode`, then check alerts and closures, find campgrounds, and browse activities and events — coverage is US NPS sites only (national parks, monuments, historic sites, seashores), not state parks, Forest Service, or BLM land. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+
+### Tools
 
 | Tool | Description |
 |:---|:---|
@@ -40,35 +42,19 @@ Six tools shaped around the trip-planning workflow — resolve a park, then key 
 | `nps_get_activities` | Curated things to do and points of interest: title, duration, location, accessibility, and fee/pet/reservation flags. |
 | `nps_find_events` | Scheduled events within a date range: dates/times, location, category, fee, and registration links. |
 
-Coverage is **US National Park Service sites only** — national parks, monuments, historic sites, seashores — not state parks and not Forest Service or BLM land.
+## Capability reference
 
-### The `parkCode` spine
-
-`parkCode` (e.g. `yose`, `grca`, `zion`) is the join key for the whole API. The workflow is two steps:
-
-1. **`nps_find_parks`** resolves a name / state / query → `parkCode`(s) plus a summary.
-2. **`nps_get_park`**, **`nps_get_alerts`**, **`nps_find_campgrounds`**, **`nps_get_activities`**, **`nps_find_events`** key on that `parkCode`.
-
-`nps_get_alerts`, `nps_find_campgrounds`, and `nps_find_events` also accept a `stateCode` for statewide queries without a code (e.g. "is anything closed in Montana's parks?"). The coordinates returned by `nps_find_parks` / `nps_get_park` feed weather servers (`nws-weather`, `open-meteo`) for a forecast.
-
----
-
-### `nps_find_parks`
-
-Resolve a place name, US state, or free-text query into NPS parks — the entry point.
+### `nps_find_parks` <sub>tool</sub>
 
 - Free-text search across park names and descriptions (e.g. `"yosemite"`, `"civil war"`, `"redwood"`); results are re-ranked locally so an exact `parkCode` or name match leads, since NPS returns matches in alphabetical-by-code order with no relevance ranking
 - Filter by two-letter `stateCode` or a comma-separated list (e.g. `"CA"`, `"WY,MT,ID"`)
 - Optional `activity` filter — case-insensitive substring match applied locally (the API has no activity param) across every site matching `query`/`stateCode`, then paginated
-- Pagination via `limit` (1–50, default 10) and `start` offset; `totalCount` counts the whole matched set, so truncation guidance names the next `start`
+- Pagination via `limit` (1–50, default 10) and `start` offset; `totalCount` counts the whole matched set, with broadening guidance when nothing matches
 - Summary carries `parkCode`, designation, states, description, coordinates, headline activities, lowest entrance fee, and the NPS page
-- Enrichment reports `totalCount`, applied-filter echo, and broadening guidance when nothing matched
 
 ---
 
-### `nps_get_park`
-
-Full trip-planning detail for one or more parks by `parkCode`.
+### `nps_get_park` <sub>tool</sub>
 
 - Batch up to **10 codes in a single upstream call**
 - Always-present core: name, designation, states, description, coordinates, weather overview, NPS page
@@ -78,9 +64,7 @@ Full trip-planning detail for one or more parks by `parkCode`.
 
 ---
 
-### `nps_get_alerts`
-
-Current alerts for a park or a whole state, with category and recency leading.
+### `nps_get_alerts` <sub>tool</sub>
 
 - Filter by `parkCode`, `stateCode`, or free-text `query`; optional `category` (`Danger`, `Caution`, `Information`, `Park Closure`) applied locally (the API has no category param) across every matching alert, then paginated
 - Pagination via `limit` (1–50, default 20) and `start` offset; truncation guidance names the next `start`
@@ -91,9 +75,7 @@ Current alerts for a park or a whole state, with category and recency leading.
 
 ---
 
-### `nps_find_campgrounds`
-
-Campgrounds at a park or across a state, flattened to what a camper filters on.
+### `nps_find_campgrounds` <sub>tool</sub>
 
 - Filter by `parkCode`, `stateCode`, or free-text `query`; `limit` (1–50, default 15) and `start` pagination
 - Amenity booleans: potable water, showers, RV dump station, toilets, trash collection, RV access — normalized from NPS's mixed array/string amenity fields
@@ -103,9 +85,7 @@ Campgrounds at a park or across a state, flattened to what a camper filters on.
 
 ---
 
-### `nps_get_activities`
-
-Curated things to do and points of interest, backed by the NPS `/thingstodo` list (distinct from a park's raw activity tags).
+### `nps_get_activities` <sub>tool</sub>
 
 - Accepts a **single** 4-letter `parkCode` or a **single** two-letter `stateCode` — at least one is required
 - Free-text `query`; `limit` (1–50, default 15) and `start` pagination
@@ -115,9 +95,7 @@ Curated things to do and points of interest, backed by the NPS `/thingstodo` lis
 
 ---
 
-### `nps_find_events`
-
-Scheduled events at a park within a date range — ranger programs, festivals, tours, interpretive events.
+### `nps_find_events` <sub>tool</sub>
 
 - Filter by `parkCode`, `stateCode`, or free-text `query`; bound the window with `dateStart` / `dateEnd` (`YYYY-MM-DD`)
 - **Page-based pagination** (`pageNumber` / `pageSize`), not offset — the `/events` endpoint differs from the rest of the API
@@ -127,14 +105,7 @@ Scheduled events at a park within a date range — ranger programs, festivals, t
 
 ## Features
 
-Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core):
-
-- Declarative tool definitions — single file per tool, framework handles registration and validation
-- Unified error handling — handlers throw, framework catches, classifies, and formats
-- Pluggable auth: `none`, `jwt`, `oauth`
-- Swappable storage backends: `in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`
-- Structured logging with optional OpenTelemetry tracing
-- STDIO and Streamable HTTP transports — same codebase runs locally or on Cloudflare Workers
+Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): stdio and Streamable HTTP transports, pluggable auth (`none` / `jwt` / `oauth`), swappable storage (`in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`), structured logging with optional OpenTelemetry tracing.
 
 NPS-specific:
 
@@ -142,6 +113,7 @@ NPS-specific:
 - Aggressive normalization of NPS's inconsistent payloads — numeric and boolean fields returned as strings, nested values (`campsites.totalSites`), array-typed amenity fields, and the distinct `/events` envelope with lowercased field names — coerced to clean domain types before they reach handlers
 - `nps_get_park` batches up to ten park codes into a single upstream request
 - Light retry on transient upstream failures (5xx / network); a missing or invalid key fails loud and names `NPS_API_KEY`
+- Coordinates returned by `nps_find_parks` / `nps_get_park` feed weather servers (`nws-weather`, `open-meteo`) for a forecast
 
 Agent-friendly output:
 
@@ -166,7 +138,7 @@ A public instance is available at `https://national-parks.caseyjhand.com/mcp` �
 }
 ```
 
-### Self-hosted
+### Self-Hosted / Local
 
 Add the following to your MCP client configuration file. A free NPS Data API key is required — [instant signup here](https://www.nps.gov/subjects/developer/get-started.htm).
 
@@ -234,7 +206,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 NPS_API_KEY=... bun run start:http
 
 ### Prerequisites
 
-- [Bun v1.3](https://bun.sh/) or higher (or Node.js v24+).
+- [Bun v1.4](https://bun.sh/) or higher (or Node.js v24+).
 - A free NPS Data API key — [instant signup](https://www.nps.gov/subjects/developer/get-started.htm). The server fails to start without it.
 
 ### Installation
@@ -336,9 +308,17 @@ See [`AGENTS.md`](./AGENTS.md) / [`CLAUDE.md`](./CLAUDE.md) for development guid
 - Register new tools in the `createApp()` arrays
 - Wrap the external API: validate raw → normalize to domain type → return output schema; never fabricate missing fields
 
+## Data & attribution
+
+Data is retrieved from the [NPS Data API](https://developer.nps.gov/) operated by the U.S. National Park Service. Content produced by NPS employees in their official capacity is a U.S. Government work in the public domain (17 U.S.C. §§ 101 and 105). No claim to original U.S. Government works.
+
+Not all content returned by the API is government-authored. Some images and materials carry third-party copyright or other restrictions — check individual item rights before reuse.
+
+The NPS Arrowhead symbol is a restricted mark protected under 18 U.S.C. § 701. It must not be reproduced or reused without written permission from the NPS Director.
+
 ## Contributing
 
-Issues and pull requests are welcome. Run checks and tests before submitting:
+Issues are welcome. Run checks and tests before submitting:
 
 ```sh
 bun run devcheck
@@ -348,11 +328,3 @@ bun run test
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) for details.
-
-## Data & attribution
-
-Data is retrieved from the [NPS Data API](https://developer.nps.gov/) operated by the U.S. National Park Service. Content produced by NPS employees in their official capacity is a U.S. Government work in the public domain (17 U.S.C. §§ 101 and 105). No claim to original U.S. Government works.
-
-Not all content returned by the API is government-authored. Some images and materials carry third-party copyright or other restrictions — check individual item rights before reuse.
-
-The NPS Arrowhead symbol is a restricted mark protected under 18 U.S.C. § 701. It must not be reproduced or reused without written permission from the NPS Director.
