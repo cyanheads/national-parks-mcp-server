@@ -3,8 +3,8 @@
     "command": "npx",
     "args": ["-y", "@cyanheads/national-parks-mcp-server"],
     "env": {
-      "MCP_TRANSPORT_TYPE": "stdio",
-      "NPS_API_KEY": "your-api-key"
-    }
+      "MCP_TRANSPORT_TYPE": "stdio"
+    },
+    "env_vars": ["NPS_API_KEY"]
   }
 }

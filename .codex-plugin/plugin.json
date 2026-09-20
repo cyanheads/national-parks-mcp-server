@@ -1,6 +1,6 @@
 {
   "name": "national-parks-mcp-server",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API. STDIO or Streamable HTTP.",
   "author": {
     "name": "Casey Hand",
@@ -25,7 +25,7 @@
     "displayName": "national-parks-mcp-server",
     "shortDescription": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API. STDIO or Streamable HTTP.",
     "longDescription": "Six tools covering the National Park Service trip-planning workflow: resolve a place, state, or query to parks (the parkCode spine), pull full park detail (fees, hours, contacts, weather, images), surface current alerts and closures, find campgrounds with amenities and reservable/first-come counts, list curated things to do, and find scheduled events within a date range. US NPS sites only. Requires a free NPS Data API key.",
-    "developerName": "Casey Hand",
+    "developerName": "cyanheads",
     "category": "Travel",
     "capabilities": ["Read"],
     "websiteURL": "https://github.com/cyanheads/national-parks-mcp-server",

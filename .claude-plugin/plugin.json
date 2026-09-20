@@ -1,20 +1,42 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "national-parks-mcp-server",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API. STDIO or Streamable HTTP.",
   "author": {
-    "name": "Casey Hand"
+    "name": "Casey Hand",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
   },
   "homepage": "https://github.com/cyanheads/national-parks-mcp-server#readme",
   "repository": "https://github.com/cyanheads/national-parks-mcp-server",
   "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "national-parks",
+    "nps",
+    "travel",
+    "outdoors",
+    "trip-planning"
+  ],
+  "userConfig": {
+    "nps_api_key": {
+      "type": "string",
+      "title": "NPS API key",
+      "description": "Required. Free instant signup at nps.gov/subjects/developer/get-started.htm, sent as the X-Api-Key header on every request.",
+      "sensitive": true,
+      "required": true
+    }
+  },
   "mcpServers": {
     "national-parks-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/national-parks-mcp-server"],
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
-        "NPS_API_KEY": "your-api-key"
+        "NPS_API_KEY": "${user_config.nps_api_key}"
       }
     }
   }

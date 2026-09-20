@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "national-parks-mcp-server",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "license": "Apache-2.0",
   "description": "Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API. STDIO or Streamable HTTP.",
   "author": { "name": "cyanheads" },
@@ -33,7 +33,8 @@
       "title": "NPS API Key",
       "description": "NPS Data API key, sent as the X-Api-Key header. Free instant signup at https://www.nps.gov/subjects/developer/get-started.htm.",
       "type": "string",
-      "required": true
+      "required": true,
+      "sensitive": true
     }
   }
 }
