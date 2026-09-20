@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.7](changelog/0.1.x/0.1.7.md) — 2026-09-20 · ⚠️ Breaking · 🛡️ Security
+
+Adopts mcp-ts-core 0.13.6: argument rejections return a structured InvalidParams envelope carrying a reason and recovery hint, tool error text closes with its reason and retryable terms, and upstream error data no longer carries the request URL — which for NPS holds the API key.
+
 ## [0.1.6](changelog/0.1.x/0.1.6.md) — 2026-08-23
 
 Adopts mcp-ts-core 0.12.3 and the MCP SDK v2 protocol surface, with explicit stateless HTTP serving, TypeScript 7 test typechecking, current framework tooling, and Bun 1.4 container builds.
