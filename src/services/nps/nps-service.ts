@@ -103,17 +103,29 @@ function hasStringAmenity(value: string | undefined | null): boolean {
   return typeof value === 'string' && !isAmenityNegative(value);
 }
 
-/** Strip HTML tags and decode the handful of entities NPS emits, to plain text. */
+/** The character references NPS emits, and the character each denotes. */
+const HTML_ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ',
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+};
+
+/**
+ * Strip HTML tags and decode the handful of entities NPS emits, to plain text.
+ *
+ * Decoding runs as a single pass so each reference is decoded exactly once. A
+ * sequence of `.replace()` calls would decode the `&` that an earlier call
+ * produced, turning the escaped text `&amp;lt;` — which means the characters
+ * `&lt;` — into `<`.
+ */
 function stripHtml(value: string | undefined | null): string {
   if (!value) return '';
   return value
     .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;/g, (ref) => HTML_ENTITIES[ref] ?? ref)
     .replace(/\s+/g, ' ')
     .trim();
 }

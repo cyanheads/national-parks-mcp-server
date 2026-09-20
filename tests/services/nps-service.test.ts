@@ -448,6 +448,32 @@ describe('NpsService', () => {
       expect(t.season).toEqual(['Summer', 'Fall']);
     });
 
+    it('decodes each character reference exactly once', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          data: [
+            {
+              id: 't2',
+              title: 'Entity Handling',
+              // An escaped entity: the source text is literally `&lt;b&gt;`, so
+              // decoding must stop at `&lt;b&gt;` and not continue to `<b>`.
+              shortDescription: 'Write &amp;lt;b&amp;gt; to show a bold tag.',
+              feeDescription: 'Fee &amp; permit &quot;combo&quot; &#39;pass&#39;&nbsp;here.',
+              accessibilityInformation: 'Double ampersand: &amp;amp;',
+              season: [],
+              relatedParks: [{ parkCode: 'acad' }],
+            },
+          ],
+        }),
+      );
+
+      const t = (await service.getThingsToDo({ parkCode: 'acad', limit: 15 }, ctx)).data[0]!;
+      expect(t.shortDescription).toBe('Write &lt;b&gt; to show a bold tag.');
+      expect(t.feeDescription).toBe('Fee & permit "combo" \'pass\' here.');
+      expect(t.accessibility).toBe('Double ampersand: &amp;');
+    });
+
     it('maps empty relatedParks to a null parkCode', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({
