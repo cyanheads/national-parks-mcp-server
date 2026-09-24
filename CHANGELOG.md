@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-09-23 · ⚠️ Breaking
+
+Campground amenities can now be null when NPS publishes no value, excluded park directions are omitted rather than null, and malformed park codes, state codes, and dates return -32007 with each tool's declared reason and recovery on every tool.
+
 ## [0.1.7](changelog/0.1.x/0.1.7.md) — 2026-09-20 · ⚠️ Breaking · 🛡️ Security
 
 Adopts mcp-ts-core 0.13.6: argument rejections return a structured InvalidParams envelope carrying a reason and recovery hint, tool error text closes with its reason and retryable terms, and upstream error data no longer carries the request URL — which for NPS holds the API key.
