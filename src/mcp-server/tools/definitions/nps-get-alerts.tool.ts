@@ -1,7 +1,8 @@
 /**
  * @fileoverview nps_get_alerts — the time-sensitive headline tool. Current
  * alerts for park(s) or state(s) with category and recency surfaced
- * prominently, sorted most-recent-first on every client surface.
+ * prominently, most-recent-first (the order /alerts returns) on every client
+ * surface.
  * @module mcp-server/tools/definitions/nps-get-alerts.tool
  */
 
@@ -31,7 +32,7 @@ const CATEGORY_FILTER_FETCH_LIMIT = 1000;
 export const npsGetAlerts = tool('nps_get_alerts', {
   title: 'national-parks-mcp-server: get alerts',
   description:
-    'Current alerts for a park or a whole state — closures, hazards, caution notices, and information — with category and recency surfaced first so "is anything closed at Glacier right now?" is answered at a glance. Get park codes from nps_find_parks, or pass a stateCode for a statewide "what\'s closed" sweep. Returns most-recent-first; an empty result with totalCount 0 means the park reports nothing closed or hazardous — good news, not an error. An empty page with a non-zero totalCount only means start ran past the end, so read the notice rather than the empty list. Closures and road conditions change daily — re-check before departure.',
+    'Current alerts for a park or a whole state — closures, hazards, caution notices, and information — with category and recency surfaced first so "is anything closed at Glacier right now?" is answered at a glance. Get park codes from nps_find_parks, or pass a stateCode for a statewide "what\'s closed" sweep. Returns most-recent-first. An empty result with totalCount 0 means no active alerts match the request (with category or query set, alerts outside that filter may still be active); an empty page with a non-zero totalCount means start ran past the end of the matches. Closures and road conditions change daily.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z
@@ -50,7 +51,7 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       .enum(['Danger', 'Caution', 'Information', 'Park Closure'])
       .optional()
       .describe(
-        'Filter to one alert category. "Danger" and "Park Closure" are the high-priority ones for trip safety. Applied locally (the API has no category param) across every alert matching parkCode/stateCode/query, then paginated with start/limit — so totalCount is the true count of matching alerts, not a per-page tally. Omit to see all categories (the default — closures and hazards should not be missed).',
+        'Filter to one alert category. "Danger" and "Park Closure" are trip-affecting. Combined with parkCode/stateCode/query and applied before start/limit, so totalCount counts every matching alert, not one page. Omit to see all categories.',
       ),
     query: z
       .string()
@@ -88,7 +89,7 @@ export const npsGetAlerts = tool('nps_get_alerts', {
             category: z
               .string()
               .describe(
-                'Alert category: "Danger", "Park Closure", "Caution", or "Information". Treat Danger and Park Closure as trip-affecting.',
+                'Alert category: "Danger", "Park Closure", "Caution", or "Information". Danger and Park Closure are trip-affecting.',
               ),
             title: z
               .string()
@@ -104,19 +105,25 @@ export const npsGetAlerts = tool('nps_get_alerts', {
               .string()
               .nullable()
               .describe(
-                'When NPS last updated/indexed this alert (YYYY-MM-DD), or null. The recency signal — a stale date may mean the condition has changed; verify against the park page.',
+                'When NPS last updated/indexed this alert (YYYY-MM-DD), or null. The recency signal — a stale date may mean the condition has changed.',
               ),
           })
           .describe('A single alert with its category, recency, and detail.'),
       )
       .describe(
-        'Current alerts, sorted most-recent first. An empty array with totalCount 0 means no active alerts — good news, not an error; with a non-zero totalCount it means start paged past the end of the matches. The notice says which.',
+        'Current alerts, most-recent first. Empty with totalCount 0 means no active alerts match the request; empty with a non-zero totalCount means start ran past the end of the matches.',
       ),
   }),
   enrichment: {
     totalCount: z
       .number()
       .describe('Total alerts matching the filter before the limit was applied.'),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when more alerts matched than this response returned; absent on a complete result.',
+      ),
     shown: z
       .number()
       .optional()
@@ -125,18 +132,18 @@ export const npsGetAlerts = tool('nps_get_alerts', {
     categoryBreakdown: z
       .string()
       .describe(
-        'Count of returned alerts per category (e.g. "Park Closure: 3, Caution: 1, Information: 2") — gauge severity without scanning every alert.',
+        'Count of returned alerts per category, most severe first (e.g. "Park Closure: 3, Caution: 1, Information: 2").',
       ),
     appliedFilters: z.string().describe('Echo of parkCode/stateCode/category/query as applied.'),
     notice: z
       .string()
       .optional()
       .describe(
-        'Message when the page is empty — states which case it is: good news (totalCount 0, the park reports nothing closed/hazardous right now) or a paging artifact (start ran past the end of a non-empty matched set).',
+        'Guidance on the result set: whether an empty page means no active alerts match (totalCount 0) or start ran past the end of the matches, the start value for the next page when more alerts matched, and a best-effort disclosure when the category filter could not cover every alert.',
       ),
   },
   enrichmentTrailer: {
-    totalCount: { label: 'Total Alerts' },
+    truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
     categoryBreakdown: { label: 'By category' },
@@ -159,9 +166,9 @@ export const npsGetAlerts = tool('nps_get_alerts', {
   ],
 
   async handler(input, ctx) {
-    // Code-format validation runs HERE, not at the Zod schema edge — a schema-level
-    // regex failure throws a raw ZodError before ctx.fail exists, so the declared
-    // recovery hint would never reach the client (#3).
+    // Code-format validation runs HERE, not as a schema .regex(): a schema
+    // rejection reaches the client as -32602 invalid_arguments with only the
+    // pattern as its hint, so the declared reason and recovery never would (#3).
     if (input.parkCode && !input.parkCode.split(',').every((t) => /^[a-z]{4}$/.test(t))) {
       throw ctx.fail(
         'invalid_park_code',
@@ -192,11 +199,11 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       ctx,
     );
 
-    // Sort most-recent-first before slicing; the API doesn't guarantee order.
-    // This is the single ordering contract — format() renders it as-is.
-    let alerts = [...result.data].sort((a, b) =>
-      (b.lastIndexedDate ?? '').localeCompare(a.lastIndexedDate ?? ''),
-    );
+    // /alerts returns records lastIndexedDate-descending, its pages concatenate
+    // in that same order, and it rejects a `sort` param with HTTP 400. That
+    // upstream order is the tool's single ordering contract: the category filter
+    // and slice keep it, and format() renders it as-is.
+    let alerts = result.data;
     let total = result.total;
     const notices: string[] = [];
 
@@ -231,11 +238,17 @@ export const npsGetAlerts = tool('nps_get_alerts', {
     if (alerts.length === 0) {
       // An empty page past the end is NOT an absence of alerts — reporting
       // "nothing closed or hazardous" alongside a non-zero totalCount would
-      // reassure a trip-planning client while closures are active.
+      // reassure a trip-planning client while closures are active. Neither is an
+      // empty match under category or query: alerts outside that filter (a
+      // closure when category is Information) may be active, so the all-clear
+      // is reserved for a location with no alerts at all.
+      const allClear = result.total === 0 && !input.query;
       notices.push(
         total > 0
           ? `No alerts on this page: start=${input.start} is past the end of ${total} matching alert(s). Re-request with start=0 to see them — this is a paging artifact, not an all-clear.`
-          : `No active alerts for ${filters.length > 0 ? filters.join(', ') : 'this search'}. The park currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.`,
+          : allClear
+            ? `No active alerts for ${filters.length > 0 ? filters.join(', ') : 'this search'}. NPS currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.`
+            : `No active alerts match ${filters.join(', ')}; alerts outside these filters may still be active. Drop category and query to see every alert.`,
       );
     }
 
@@ -263,8 +276,9 @@ export const npsGetAlerts = tool('nps_get_alerts', {
         { type: 'text', text: 'No alerts in this response. See the notice for what this means.' },
       ];
     }
-    // Render in the handler's order (most-recent-first) — re-sorting here would
-    // hand structuredContent and content[] clients different result orders.
+    // Render in the order the handler returned (upstream, most-recent-first) —
+    // re-sorting here would hand structuredContent and content[] clients
+    // different result orders.
     const lines: string[] = [`## ${result.alerts.length} active alerts`, ''];
     for (const a of result.alerts) {
       lines.push(`### [${a.category || 'Alert'}] ${a.title}`);

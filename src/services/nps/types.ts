@@ -262,8 +262,9 @@ export interface NpsParkDetail {
   contacts?: NpsParkContacts;
   description: string;
   designation: string;
-  directionsInfo: string | null;
-  directionsUrl: string | null;
+  /** Present only when the `directions` section is included; null when NPS has none. */
+  directionsInfo?: string | null;
+  directionsUrl?: string | null;
   entranceFees?: NpsFeeEntry[];
   entrancePasses?: NpsFeeEntry[];
   fullName: string;
@@ -301,13 +302,14 @@ export interface NpsAlert {
   url: string | null;
 }
 
+/** Each amenity is true/false, or null when NPS published no value for it. */
 export interface NpsCampgroundAmenities {
-  dumpStation: boolean;
-  potableWater: boolean;
-  rvAllowed: boolean;
-  showers: boolean;
-  toilets: boolean;
-  trashCollection: boolean;
+  dumpStation: boolean | null;
+  potableWater: boolean | null;
+  rvAllowed: boolean | null;
+  showers: boolean | null;
+  toilets: boolean | null;
+  trashCollection: boolean | null;
 }
 
 export interface NpsCampground {

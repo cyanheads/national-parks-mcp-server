@@ -18,14 +18,12 @@ export const npsGetActivities = tool('nps_get_activities', {
   input: z.object({
     parkCode: z
       .string()
-      .regex(/^[a-z]{4}$/)
       .optional()
       .describe(
         'A single 4-letter lowercase park code (e.g. "acad"). Get it from nps_find_parks. Accepts one park code, not a list. Provide parkCode or stateCode.',
       ),
     stateCode: z
       .string()
-      .regex(/^[A-Za-z]{2}$/)
       .optional()
       .describe(
         'A single two-letter state code (e.g. "ME"). Returns curated activities across NPS sites in that state.',
@@ -102,16 +100,27 @@ export const npsGetActivities = tool('nps_get_activities', {
     totalCount: z
       .number()
       .describe('Total activities matching the filter before the limit was applied.'),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when more activities matched than this response returned; absent on a complete result.',
+      ),
     shown: z
       .number()
       .optional()
       .describe('Activities returned in this response (populated when capped by limit).'),
     cap: z.number().optional().describe('Limit applied (populated when results were truncated).'),
     appliedFilters: z.string().describe('Echo of parkCode/stateCode/query as applied.'),
-    notice: z.string().optional().describe('Guidance when no curated activities matched.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance on the result set: where else to look when no curated activities matched, the start value for the next page when more matched, or the way back when start ran past the end.',
+      ),
   },
   enrichmentTrailer: {
-    totalCount: { label: 'Total Activities' },
+    truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
     appliedFilters: { label: 'Filters' },
@@ -124,11 +133,43 @@ export const npsGetActivities = tool('nps_get_activities', {
       recovery:
         'Provide a parkCode (e.g. "acad") or stateCode (e.g. "ME"). At least one location filter is required.',
     },
+    {
+      reason: 'invalid_park_code',
+      code: JsonRpcErrorCode.ValidationError,
+      when: "parkCode isn't a single 4-letter lowercase code.",
+      recovery:
+        'Provide one 4-letter lowercase park code (e.g. "acad"), not a list. Look it up with nps_find_parks.',
+    },
+    {
+      reason: 'invalid_state_code',
+      code: JsonRpcErrorCode.ValidationError,
+      when: "stateCode isn't a single two-letter code.",
+      recovery: 'Provide one two-letter state code (e.g. "ME"), not a list.',
+    },
   ],
 
   async handler(input, ctx) {
+    // An empty string from a form client reads as omitted, so it falls through to
+    // missing_filter rather than a format error.
     if (!input.parkCode && !input.stateCode) {
       throw ctx.fail('missing_filter', undefined, { ...ctx.recoveryFor('missing_filter') });
+    }
+    // Code-format validation runs HERE, not as a schema .regex(): a schema
+    // rejection reaches the client as -32602 invalid_arguments with only the
+    // pattern as its hint, so the declared reason and recovery never would (#12).
+    if (input.parkCode && !/^[a-z]{4}$/.test(input.parkCode)) {
+      throw ctx.fail(
+        'invalid_park_code',
+        `parkCode "${input.parkCode}" must be a single 4-letter lowercase code.`,
+        { ...ctx.recoveryFor('invalid_park_code') },
+      );
+    }
+    if (input.stateCode && !/^[A-Za-z]{2}$/.test(input.stateCode)) {
+      throw ctx.fail(
+        'invalid_state_code',
+        `stateCode "${input.stateCode}" must be a single two-letter code.`,
+        { ...ctx.recoveryFor('invalid_state_code') },
+      );
     }
 
     const result = await getNpsService().getThingsToDo(

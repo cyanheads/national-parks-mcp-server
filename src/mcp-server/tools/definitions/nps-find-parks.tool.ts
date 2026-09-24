@@ -38,7 +38,7 @@ export const npsFindParks = tool('nps_find_parks', {
       .string()
       .optional()
       .describe(
-        'Free-text search across park names and descriptions (e.g. "yosemite", "civil war", "redwood"). Results are re-ranked locally so an exact parkCode or name match leads: NPS returns matches in alphabetical-by-code order with no relevance ranking, so without this the obvious park can sit behind sites that only mention the term in their description. Omit to browse by state. At least one of query or stateCode is recommended; with neither, returns the first page of all ~470 NPS sites.',
+        'Free-text search across park names and descriptions (e.g. "yosemite", "civil war", "redwood"). Exact parkCode or name matches lead, then other name matches, then parks that only mention the term in their description — ranked across every match before start/limit apply. Omit to browse by state. At least one of query or stateCode is recommended; with neither, returns the first page of all ~470 NPS sites.',
       ),
     stateCode: z
       .string()
@@ -50,7 +50,7 @@ export const npsFindParks = tool('nps_find_parks', {
       .string()
       .optional()
       .describe(
-        'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match applied locally (the API has no activity param) across every site matching query/stateCode, then paginated with start/limit — so totalCount is the true count of matching parks, not a per-page tally. Use nps_get_park to see a park\'s full activity list.',
+        'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match, combined with query/stateCode and applied before start/limit, so totalCount counts every matching park, not one page. Use nps_get_park to see a park\'s full activity list.',
       ),
     limit: z
       .number()
@@ -94,7 +94,7 @@ export const npsFindParks = tool('nps_find_parks', {
               .number()
               .nullable()
               .describe(
-                'Center latitude (decimal degrees), or null if the park record has no coordinates. Feed to nws-weather / open-meteo for a forecast.',
+                'Center latitude (decimal degrees), or null if the park record has no coordinates.',
               ),
             longitude: z
               .number()
@@ -113,9 +113,7 @@ export const npsFindParks = tool('nps_find_parks', {
               ),
             url: z
               .string()
-              .describe(
-                "Park's official NPS.gov page — the source for everything trimmed from this summary.",
-              ),
+              .describe("Park's official NPS.gov page, with fuller detail than this summary."),
           })
           .describe('A matching park with its parkCode and trip-planning summary.'),
       )
@@ -126,7 +124,13 @@ export const npsFindParks = tool('nps_find_parks', {
   enrichment: {
     totalCount: z
       .number()
-      .describe('Total parks matching the query/state filter before the limit was applied.'),
+      .describe('Total parks matching every filter, before start/limit were applied.'),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when more parks matched than this response returned; absent on a complete result.',
+      ),
     shown: z
       .number()
       .optional()
@@ -139,18 +143,16 @@ export const npsFindParks = tool('nps_find_parks', {
       .describe('The limit applied to this response (populated when results were truncated).'),
     appliedFilters: z
       .string()
-      .describe(
-        'Echo of the filters as the server applied them (query / stateCode / activity), so the agent can see what was searched.',
-      ),
+      .describe('Echo of the filters as applied (query / stateCode / activity).'),
     notice: z
       .string()
       .optional()
       .describe(
-        'Guidance when no parks matched — suggests broadening the query, checking the state code, or dropping the activity filter.',
+        'Guidance on the result set: how to broaden a search that matched nothing, the start value for the next page when more parks matched, the way back when start ran past the end, and a best-effort disclosure when the activity scan could not cover every site.',
       ),
   },
   enrichmentTrailer: {
-    totalCount: { label: 'Total Matches' },
+    truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
     appliedFilters: { label: 'Filters' },
@@ -166,9 +168,9 @@ export const npsFindParks = tool('nps_find_parks', {
   ],
 
   async handler(input, ctx) {
-    // Code-format validation runs HERE, not at the Zod schema edge — a schema-level
-    // regex failure throws a raw ZodError before ctx.fail exists, so the declared
-    // recovery hint would never reach the client (#3).
+    // Code-format validation runs HERE, not as a schema .regex(): a schema
+    // rejection reaches the client as -32602 invalid_arguments with only the
+    // pattern as its hint, so the declared reason and recovery never would (#3).
     if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
       throw ctx.fail(
         'invalid_state_code',

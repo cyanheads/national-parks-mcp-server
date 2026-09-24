@@ -64,6 +64,11 @@ function toBool(value: string | undefined | null): boolean {
   return value === 'true' || value === '1';
 }
 
+/** `toBool` for a field where an empty upstream value means "unknown" → null. */
+function toBoolOrNull(value: string | undefined | null): boolean | null {
+  return emptyToNull(value) === null ? null : toBool(value);
+}
+
 /** Normalize an empty-or-missing string to null; trims whitespace. */
 function emptyToNull(value: string | undefined | null): string | null {
   if (value == null) return null;
@@ -72,35 +77,48 @@ function emptyToNull(value: string | undefined | null): string | null {
 }
 
 /**
- * Negative sentinels NPS uses across amenity fields to mean "not available".
- * `toilets`/`showers` are TYPE-described (`"Flush Toilets - seasonal"`,
- * `"Hot - Year Round"`) and never start with "Yes", so a "starts-with-Yes"
- * test wrongly reports them absent. Presence = any element that isn't blank
- * and isn't one of these negatives.
+ * Negative sentinels NPS uses across amenity fields to mean "not available",
+ * beyond the `No`-led values (`No`, `No water`, `No Toilets`) that
+ * `isAmenityNegative` matches by pattern. `toilets`/`showers` are
+ * TYPE-described (`"Flush Toilets - seasonal"`, `"Hot - Year Round"`) and never
+ * start with "Yes", so a "starts-with-Yes" test wrongly reports them absent.
  */
-const AMENITY_NEGATIVES = new Set(['none', 'no', 'no water', 'not available', 'n/a']);
+const AMENITY_NEGATIVES = new Set(['none', 'not available', 'n/a']);
 
-/** True if the value is blank or a known "not available" sentinel. */
+/** True if a non-blank element is a known "not available" value. `\b` keeps
+ * `None` from matching `/^no\b/` — it is covered by the sentinel set instead. */
 function isAmenityNegative(value: string): boolean {
   const v = value.trim().toLowerCase();
-  return v === '' || AMENITY_NEGATIVES.has(v);
+  return /^no\b/.test(v) || AMENITY_NEGATIVES.has(v);
 }
 
 /**
- * NPS array amenity fields (`potableWater`, `showers`, `toilets`) list the
- * amenity's type/season (e.g. ["Flush Toilets - year round"], ["Hot - Seasonal"],
- * ["Yes - seasonal"]) or a negative (["None"], ["No water"]). The amenity is
- * present when any element is a real value rather than a negative sentinel.
+ * Classify an NPS amenity field: `true` present, `false` absent, `null` when
+ * NPS published no value (`""`, `[]`, or only blank elements) — a missing
+ * upstream value is unknown, never "no".
+ *
+ * Array fields (`potableWater`, `showers`, `toilets`) list the amenity's
+ * type/season (["Flush Toilets - year round"], ["Yes - seasonal"]) or a
+ * negative (["None"], ["No Toilets"]); string fields (`dumpStation`,
+ * `trashRecyclingCollection`) carry one such value. An element saying `not
+ * potable` or `non-potable` is negative. NPS also splits the sentence "Water,
+ * but not potable" at its comma into ["Water", " but not potable"], so a
+ * fragment that opens with `but` negates the element it was split from too. The
+ * amenity is present when any remaining element is a real value, so a mixed
+ * ["Vault Toilets - year round", "No Toilets"] stays true.
  */
-function hasAmenity(value: string[] | undefined | null): boolean {
-  if (!Array.isArray(value)) return false;
-  return value.some((v) => typeof v === 'string' && !isAmenityNegative(v));
-}
-
-/** A string amenity field (`dumpStation`, `trashRecyclingCollection`) → boolean.
- * Values are "Yes"/"Yes - seasonal"/"No"; present unless blank or a negative. */
-function hasStringAmenity(value: string | undefined | null): boolean {
-  return typeof value === 'string' && !isAmenityNegative(value);
+function classifyAmenity(value: string | string[] | undefined | null): boolean | null {
+  const elements = (Array.isArray(value) ? value : [value]).filter(
+    (v): v is string => typeof v === 'string' && v.trim() !== '',
+  );
+  if (elements.length === 0) return null;
+  const negated = new Set<number>();
+  elements.forEach((v, i) => {
+    if (!/\bnot potable\b|\bnon-?potable\b/i.test(v)) return;
+    negated.add(i);
+    if (/^\s*but\b/i.test(v)) negated.add(i - 1);
+  });
+  return elements.some((v, i) => !negated.has(i) && !isAmenityNegative(v));
 }
 
 /** The character references NPS emits, and the character each denotes. */
@@ -113,6 +131,47 @@ const HTML_ENTITIES: Record<string, string> = {
   '&#39;': "'",
 };
 
+const HTML_ENTITY = /&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;/g;
+
+/**
+ * An HTML tag, comment, or declaration: `<` followed by a letter, `/`, `!`, or
+ * `?` — the characters that open markup in the HTML tokenizer — up to the next
+ * `>` with no `<` between. A `<` followed by anything else is prose
+ * (`p < 0.05`, `(<20 C)`) and is kept. Excluding `<` from the body stops a
+ * match at the next `<`, so a string of unclosed `<` scans in linear time
+ * rather than backtracking to the end once per `<`.
+ */
+const HTML_TAG = /<[A-Za-z/!?][^<>]*>/g;
+
+/**
+ * Replace every `HTML_TAG` with a space, including a tag reassembled from the
+ * pieces around a removed inner one (`<scr<b>ipt>`). One scan keeps a stack of
+ * the unclosed markup-opening `<` positions: a `>` closes the innermost, and a
+ * prose `<` can never sit inside a tag, so it discards every opener before it.
+ * That is the result of re-applying the pattern until nothing changes, in
+ * linear time — the regex loop takes one full pass per nesting level.
+ */
+function removeTags(value: string): string {
+  const out: string[] = [];
+  const open: number[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const ch = value.charAt(i);
+    if (ch === '<') {
+      if (/[A-Za-z/!?]/.test(value.charAt(i + 1))) open.push(out.length);
+      else open.length = 0;
+    } else if (ch === '>') {
+      const start = open.pop();
+      if (start !== undefined) {
+        out.length = start;
+        out.push(' ');
+        continue;
+      }
+    }
+    out.push(ch);
+  }
+  return out.join('');
+}
+
 /**
  * Strip HTML tags and decode the handful of entities NPS emits, to plain text.
  *
@@ -123,11 +182,23 @@ const HTML_ENTITIES: Record<string, string> = {
  */
 function stripHtml(value: string | undefined | null): string {
   if (!value) return '';
-  return value
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;/g, (ref) => HTML_ENTITIES[ref] ?? ref)
+  return removeTags(value)
+    .replace(HTML_ENTITY, (ref) => HTML_ENTITIES[ref] ?? ref)
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * `stripHtml` for fields that are usually plain text with deliberate line
+ * breaks (fee descriptions, weather, directions): a value carrying a tag or
+ * entity reference is converted, and any other value is returned unchanged, so
+ * its paragraph breaks aren't collapsed.
+ */
+function plainText(value: string | undefined | null): string {
+  if (!value) return '';
+  return value.search(HTML_TAG) === -1 && value.search(HTML_ENTITY) === -1
+    ? value
+    : stripHtml(value);
 }
 
 /** Extract `.name` strings from NPS `[{id, name}]` arrays. */
@@ -151,7 +222,7 @@ function mapFees(
   return fees.map((f) => ({
     cost: f.cost ?? '',
     title: f.title ?? '',
-    description: f.description ?? '',
+    description: plainText(f.description),
   }));
 }
 
@@ -311,12 +382,14 @@ export class NpsService {
       description: p.description ?? '',
       latitude: toFloat(p.latitude),
       longitude: toFloat(p.longitude),
-      weatherOverview: emptyToNull(p.weatherInfo),
-      directionsInfo: include('directions') ? emptyToNull(p.directionsInfo) : null,
-      directionsUrl: include('directions') ? emptyToNull(p.directionsUrl) : null,
+      weatherOverview: emptyToNull(plainText(p.weatherInfo)),
       url: p.url ?? '',
     };
 
+    if (include('directions')) {
+      detail.directionsInfo = emptyToNull(plainText(p.directionsInfo));
+      detail.directionsUrl = emptyToNull(p.directionsUrl);
+    }
     if (include('activities')) detail.activities = names(p.activities);
     if (include('topics')) detail.topics = names(p.topics);
     if (include('fees')) {
@@ -392,12 +465,12 @@ export class NpsService {
       reservationUrl: emptyToNull(c.reservationUrl),
       fee: emptyToNull(c.fees?.[0]?.cost),
       amenities: {
-        potableWater: hasAmenity(c.amenities?.potableWater),
-        showers: hasAmenity(c.amenities?.showers),
-        toilets: hasAmenity(c.amenities?.toilets),
-        dumpStation: hasStringAmenity(c.amenities?.dumpStation),
-        trashCollection: hasStringAmenity(c.amenities?.trashRecyclingCollection),
-        rvAllowed: toBool(c.accessibility?.rvAllowed),
+        potableWater: classifyAmenity(c.amenities?.potableWater),
+        showers: classifyAmenity(c.amenities?.showers),
+        toilets: classifyAmenity(c.amenities?.toilets),
+        dumpStation: classifyAmenity(c.amenities?.dumpStation),
+        trashCollection: classifyAmenity(c.amenities?.trashRecyclingCollection),
+        rvAllowed: toBoolOrNull(c.accessibility?.rvAllowed),
       },
       accessibility: emptyToNull(c.accessibility?.adaInfo),
       url: emptyToNull(c.url),

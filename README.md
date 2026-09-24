@@ -70,7 +70,7 @@ US National Park Service trip planning over the NPS Data API. Resolve a park to 
 - Pagination via `limit` (1–50, default 20) and `start` offset; truncation guidance names the next `start`
 - Sorted most-recent-first, identically on both client surfaces (`structuredContent` and `content[]`)
 - `categoryBreakdown` enrichment counts returned alerts per category — severity-ordered — so severity is legible without scanning each one
-- An empty result is explicitly framed in the notice — good news (the park reports nothing closed or hazardous) when nothing matched, or a paging artifact when `start` ran past the end — never a bare error
+- An empty result is explicitly framed in the notice — good news (nothing closed or hazardous) when the park or state has no alerts, a reminder that other alerts may still be active when a `category` or `query` filter matched nothing, or a paging artifact when `start` ran past the end — never a bare error
 - `lastIndexedDate` is the recency signal — a stale date may mean the condition has changed
 
 ---
@@ -78,7 +78,7 @@ US National Park Service trip planning over the NPS Data API. Resolve a park to 
 ### `nps_find_campgrounds` <sub>tool</sub>
 
 - Filter by `parkCode`, `stateCode`, or free-text `query`; `limit` (1–50, default 15) and `start` pagination
-- Amenity booleans: potable water, showers, RV dump station, toilets, trash collection, RV access — normalized from NPS's mixed array/string amenity fields
+- Amenities: potable water, showers, RV dump station, toilets, trash collection, RV access — normalized from NPS's mixed array/string amenity fields to yes, no, or unknown when NPS publishes no value
 - Reservable vs. first-come-first-served site counts, total sites, reservation guidance and booking URL (often recreation.gov)
 - Lowest fee, accessibility summary, coordinates, and the campground's NPS page
 - Some parks list lodging or backcountry permits instead of NPS-managed campgrounds; an empty result is not an error
@@ -117,9 +117,9 @@ NPS-specific:
 
 Agent-friendly output:
 
-- Result-set context on every response — `totalCount`, truncation (`shown` / `cap`), applied-filter echo, and empty-result notices reach both the structured and text surfaces
+- Result-set context on every response — `totalCount`, truncation (`truncated` / `shown` / `cap`), applied-filter echo, and empty-result notices reach both the structured and text surfaces
 - The `parkCode`-first workflow is encoded in every tool description; `nps_get_park` returns `missingCodes` so a wrong code self-corrects
-- Uncertainty preserved, never fabricated — every derived field is nullable and a missing upstream value yields `null`, not a guess; coordinates are never invented for downstream weather lookups
+- Uncertainty preserved, never fabricated — missing coordinates, directions, fees, and amenity values come back `null`, not a guess; coordinates are never invented for downstream weather lookups
 
 ## Getting started
 

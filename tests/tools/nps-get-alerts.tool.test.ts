@@ -1,13 +1,13 @@
 /**
- * @fileoverview Tests for the nps_get_alerts tool — recency sort, category
- * breakdown, the local category filter, the empty-is-good-news notice, and format().
- * Also locks the two-mode fetch: a local `category` filter forces a whole-corpus
- * pull sliced locally, because an upstream `start` would skip records before the
- * filter ever saw them.
+ * @fileoverview Tests for the nps_get_alerts tool — upstream order preserved,
+ * category breakdown, the local category filter, the empty-is-good-news notice,
+ * and format(). Also locks the two-mode fetch: a local `category` filter forces a
+ * whole-corpus pull sliced locally, because an upstream `start` would skip
+ * records before the filter ever saw them.
  * @module tests/tools/nps-get-alerts.tool.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { npsGetAlerts } from '@/mcp-server/tools/definitions/nps-get-alerts.tool.js';
 import type { NpsAlert } from '@/services/nps/types.js';
@@ -18,6 +18,11 @@ vi.mock('@/services/nps/nps-service.js', () => ({
 }));
 
 import { getNpsService } from '@/services/nps/nps-service.js';
+
+/** Text of every content block, joined — the surface content[]-reading clients see. */
+function contentText(result: { content: { type: string; text?: string }[] }): string {
+  return result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+}
 
 function makeAlert(overrides?: Partial<NpsAlert>): NpsAlert {
   return {
@@ -42,12 +47,12 @@ describe('nps_get_alerts', () => {
     getAlerts.mockReset();
   });
 
-  it('returns alerts sorted most-recent-first with a category breakdown', async () => {
+  it('returns alerts most-recent-first, as /alerts orders them, with a category breakdown', async () => {
     getAlerts.mockResolvedValueOnce({
       total: 2,
       data: [
-        makeAlert({ id: 'old', lastIndexedDate: '2026-01-01', category: 'Caution' }),
         makeAlert({ id: 'new', lastIndexedDate: '2026-06-01', category: 'Park Closure' }),
+        makeAlert({ id: 'old', lastIndexedDate: '2026-01-01', category: 'Caution' }),
       ],
     });
     const input = npsGetAlerts.input.parse({ parkCode: 'glac' });
@@ -273,15 +278,11 @@ describe('nps_get_alerts', () => {
    * ----------------------------------------------------------------------- */
 
   it('renders format() rows in the handler order (recency), not category order', async () => {
+    // Recency-ordered, as /alerts returns them, with categories out of severity
+    // order — so a category re-sort in format() would show up as reordered rows.
     getAlerts.mockResolvedValueOnce({
       total: 3,
       data: [
-        makeAlert({
-          id: 'old-closure',
-          category: 'Park Closure',
-          title: 'Old closure',
-          lastIndexedDate: '2026-01-01',
-        }),
         makeAlert({
           id: 'new-caution',
           category: 'Caution',
@@ -293,6 +294,12 @@ describe('nps_get_alerts', () => {
           category: 'Information',
           title: 'Mid info',
           lastIndexedDate: '2026-03-01',
+        }),
+        makeAlert({
+          id: 'old-closure',
+          category: 'Park Closure',
+          title: 'Old closure',
+          lastIndexedDate: '2026-01-01',
         }),
       ],
     });
@@ -313,6 +320,45 @@ describe('nps_get_alerts', () => {
       'Information|Mid info',
       'Park Closure|Old closure',
     ]);
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * #11 — /alerts is already lastIndexedDate-desc, so the handler never reorders
+   * ----------------------------------------------------------------------- */
+
+  it('preserves upstream order on both surfaces rather than re-sorting by date', async () => {
+    // Deliberately not recency-ordered: a local sort would reorder these rows.
+    getAlerts.mockResolvedValueOnce({
+      total: 3,
+      data: [
+        makeAlert({ id: 'u1', title: 'First', lastIndexedDate: '2026-01-01' }),
+        makeAlert({ id: 'u2', title: 'Second', lastIndexedDate: '2026-06-01' }),
+        makeAlert({ id: 'u3', title: 'Third', lastIndexedDate: '2026-03-01' }),
+      ],
+    });
+    const result = await runToolContract(npsGetAlerts, { stateCode: 'CA' });
+
+    const sc = result.structuredContent as { alerts: NpsAlert[] };
+    expect(sc.alerts.map((a) => a.id)).toEqual(['u1', 'u2', 'u3']);
+    const headings = [...contentText(result as never).matchAll(/^### \[.+?\] (.+)$/gm)].map(
+      (m) => m[1],
+    );
+    expect(headings).toEqual(['First', 'Second', 'Third']);
+  });
+
+  it('preserves upstream order within the category-filtered set', async () => {
+    getAlerts.mockResolvedValueOnce({
+      total: 3,
+      data: [
+        makeAlert({ id: 'c1', category: 'Park Closure', lastIndexedDate: '2026-01-01' }),
+        makeAlert({ id: 'x1', category: 'Caution', lastIndexedDate: '2026-09-01' }),
+        makeAlert({ id: 'c2', category: 'Park Closure', lastIndexedDate: '2026-06-01' }),
+      ],
+    });
+    const input = npsGetAlerts.input.parse({ stateCode: 'CA', category: 'Park Closure' });
+    const result = await npsGetAlerts.handler(input, ctx);
+
+    expect(result.alerts.map((a) => a.id)).toEqual(['c1', 'c2']);
   });
 
   it('never reports an all-clear for an empty page past the end of the matches', async () => {
@@ -349,6 +395,29 @@ describe('nps_get_alerts', () => {
     await npsGetAlerts.handler(input, ctx);
 
     expect(getEnrichment(ctx).notice).toMatch(/nothing closed or hazardous/);
+  });
+
+  it.each([
+    [
+      'a category filter that excludes an active closure',
+      { parkCode: 'glac', category: 'Information' },
+      { total: 1, data: [makeAlert({ id: 'closure', category: 'Park Closure' })] },
+    ],
+    ['a query filter', { parkCode: 'glac', query: 'wildfire' }, { total: 0, data: [] }],
+  ] as const)('never reports an all-clear for %s', async (_, args, upstream) => {
+    getAlerts.mockResolvedValueOnce(upstream);
+    const result = await runToolContract(npsGetAlerts, args);
+
+    const sc = result.structuredContent as {
+      alerts: NpsAlert[];
+      totalCount: number;
+      notice: string;
+    };
+    expect(sc.alerts).toEqual([]);
+    expect(sc.totalCount).toBe(0);
+    expect(sc.notice).not.toMatch(/nothing closed or hazardous/);
+    expect(sc.notice).toContain('No active alerts match');
+    expect(contentText(result as never)).not.toMatch(/nothing closed or hazardous/);
   });
 
   it('reconstructs a full page from two half pages, by row identity', async () => {
@@ -421,5 +490,58 @@ describe('nps_get_alerts', () => {
       },
     });
     expect(getAlerts).not.toHaveBeenCalled();
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * #9 — the truncated flag reaches both client surfaces. Asserted on the
+   * runToolContract result: getEnrichment() reads the raw store, which holds
+   * truncated: true even when the output parse strips it.
+   * ----------------------------------------------------------------------- */
+
+  describe('truncated flag on the client surfaces', () => {
+    it('sets structuredContent.truncated and a Truncated trailer line on a capped page', async () => {
+      getAlerts.mockResolvedValueOnce({
+        total: 53,
+        data: [
+          makeAlert({ id: 'a1', category: 'Park Closure', lastIndexedDate: '2026-09-20' }),
+          makeAlert({ id: 'a2', category: 'Caution', lastIndexedDate: '2026-09-19' }),
+        ],
+      });
+      const result = await runToolContract(npsGetAlerts, { stateCode: 'CA', limit: 2 });
+
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.truncated).toBe(true);
+      expect(sc).toMatchObject({
+        totalCount: 53,
+        shown: 2,
+        cap: 2,
+        categoryBreakdown: 'Park Closure: 1, Caution: 1',
+        appliedFilters: 'stateCode=CA',
+        notice: expect.stringContaining('start=2'),
+      });
+      const text = contentText(result as never);
+      expect(text).toContain('**Truncated:** true');
+      expect(text).toContain('**53 total**');
+      expect(text).toContain('**Shown:** 2');
+      expect(text).toContain('**Limit:** 2');
+      expect(text).toContain('**By category:** Park Closure: 1, Caution: 1');
+      expect(text).toContain('**Filters:** stateCode=CA');
+      expect(text).toContain('Request the next page with start=2.');
+    });
+
+    it('omits truncated from both surfaces on a complete result — absent, never false', async () => {
+      getAlerts.mockResolvedValueOnce({ total: 1, data: [makeAlert()] });
+      const result = await runToolContract(npsGetAlerts, { parkCode: 'glac', limit: 50 });
+
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect('truncated' in sc).toBe(false);
+      expect('shown' in sc).toBe(false);
+      expect('cap' in sc).toBe(false);
+      expect('notice' in sc).toBe(false);
+      expect(sc).toMatchObject({ totalCount: 1, categoryBreakdown: 'Park Closure: 1' });
+      const text = contentText(result as never);
+      expect(text).not.toMatch(/truncated/i);
+      expect(text).toContain('**1 total**');
+    });
   });
 });

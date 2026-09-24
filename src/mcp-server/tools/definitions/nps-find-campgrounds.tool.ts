@@ -85,27 +85,49 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
               ),
             amenities: z
               .object({
-                potableWater: z.boolean().describe('Drinking water available on site.'),
-                showers: z.boolean().describe('Showers available.'),
-                dumpStation: z.boolean().describe('RV dump station available.'),
-                rvAllowed: z.boolean().describe('RVs permitted.'),
-                toilets: z.boolean().describe('Toilets (flush or vault) available.'),
-                trashCollection: z.boolean().describe('Trash/recycling collection on site.'),
+                potableWater: z
+                  .boolean()
+                  .nullable()
+                  .describe(
+                    'Drinking water available on site, or null when NPS published no value.',
+                  ),
+                showers: z
+                  .boolean()
+                  .nullable()
+                  .describe('Showers available, or null when NPS published no value.'),
+                dumpStation: z
+                  .boolean()
+                  .nullable()
+                  .describe('RV dump station available, or null when NPS published no value.'),
+                rvAllowed: z
+                  .boolean()
+                  .nullable()
+                  .describe('RVs permitted, or null when NPS published no value.'),
+                toilets: z
+                  .boolean()
+                  .nullable()
+                  .describe(
+                    'Toilets of any type (flush, vault, portable, composting) available, or null when NPS published no value.',
+                  ),
+                trashCollection: z
+                  .boolean()
+                  .nullable()
+                  .describe(
+                    'Trash/recycling collection on site, or null when NPS published no value.',
+                  ),
               })
               .describe(
-                "Key amenities as booleans, normalized from NPS's mixed array/string amenity fields. The campground's NPS page has the full amenity list.",
+                "Key amenities: true, false, or null when NPS published no value (unknown, not absent). The campground's NPS page has the full amenity list.",
               ),
             accessibility: z
               .string()
               .nullable()
-              .describe(
-                'Free-text accessibility summary (from accessibility.adaInfo), or null if absent/empty.',
-              ),
+              .describe('Free-text accessibility summary, or null if NPS publishes none.'),
             url: z
               .string()
               .nullable()
               .describe(
-                "Campground's NPS.gov page, or null — the source for the full amenity/site detail trimmed here.",
+                "Campground's NPS.gov page with the full amenity and site detail, or null.",
               ),
           })
           .describe('A single campground with amenities, site counts, and reservation info.'),
@@ -116,16 +138,27 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
     totalCount: z
       .number()
       .describe('Total campgrounds matching the filter before the limit was applied.'),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when more campgrounds matched than this response returned; absent on a complete result.',
+      ),
     shown: z
       .number()
       .optional()
       .describe('Campgrounds returned in this response (populated when capped by limit).'),
     cap: z.number().optional().describe('Limit applied (populated when results were truncated).'),
     appliedFilters: z.string().describe('Echo of parkCode/stateCode/query as applied.'),
-    notice: z.string().optional().describe('Guidance when no campgrounds matched.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance on the result set: where else to look when no campgrounds matched, the start value for the next page when more matched, or the way back when start ran past the end.',
+      ),
   },
   enrichmentTrailer: {
-    totalCount: { label: 'Total Campgrounds' },
+    truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
     appliedFilters: { label: 'Filters' },
@@ -147,9 +180,9 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
   ],
 
   async handler(input, ctx) {
-    // Code-format validation runs HERE, not at the Zod schema edge — a schema-level
-    // regex failure throws a raw ZodError before ctx.fail exists, so the declared
-    // recovery hint would never reach the client (#3).
+    // Code-format validation runs HERE, not as a schema .regex(): a schema
+    // rejection reaches the client as -32602 invalid_arguments with only the
+    // pattern as its hint, so the declared reason and recovery never would (#3).
     if (input.parkCode && !input.parkCode.split(',').every((t) => /^[a-z]{4}$/.test(t))) {
       throw ctx.fail(
         'invalid_park_code',
@@ -250,10 +283,11 @@ function siteSummary(c: NpsCampground): string {
   return `${total} (${reservable} reservable, ${firstCome} first-come)`;
 }
 
-/** Explicit Yes/No per amenity — a camper filtering on "no RV" needs the No, too. */
+/** Explicit Yes/No per amenity — a camper filtering on "no RV" needs the No, too.
+ * An amenity NPS published no value for reads Unknown, never No. */
 function amenityLine(c: NpsCampground): string {
   const a = c.amenities;
-  const yn = (b: boolean) => (b ? 'Yes' : 'No');
+  const yn = (b: boolean | null) => (b === null ? 'Unknown' : b ? 'Yes' : 'No');
   return [
     `Potable water: ${yn(a.potableWater)}`,
     `Showers: ${yn(a.showers)}`,

@@ -14,9 +14,9 @@ Plan a national-park trip — parks, alerts, campgrounds, and things to do acros
 |:-----|:------------|:-----------|:------------|
 | `nps_find_parks` | Resolve a place name, state, or free-text query to NPS parks — **the required first step**; returns `parkCode` (the spine the other tools key on) plus a trip-planning summary. US NPS sites only. | `query`, `stateCode`, `activity`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
 | `nps_get_park` | Full trip-planning detail for one or more parks by `parkCode`: description, activities, fees & passes, season hours, contacts, directions, weather overview, images, NPS URL. | `parkCode` (1–10), `fields` | `readOnlyHint: true`, `openWorldHint: true` |
-| `nps_get_alerts` | Current alerts for a park or state — closures, hazards, caution, information. The time-sensitive headline tool; surfaces category + recency prominently. | `parkCode`, `stateCode`, `category`, `query`, `limit` | `readOnlyHint: true`, `openWorldHint: true` |
+| `nps_get_alerts` | Current alerts for a park or state — closures, hazards, caution, information. The time-sensitive headline tool; surfaces category + recency prominently. | `parkCode`, `stateCode`, `category`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
 | `nps_find_campgrounds` | Campgrounds at a park: amenities (hookups, potable water, showers, dump station), reservable vs. first-come site counts, reservation info, accessibility, fees. | `parkCode`, `stateCode`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
-| `nps_get_activities` | Curated things to do and points of interest for a park: title, description, duration, accessibility, location, fee/pet/reservation flags, season. | `parkCode`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
+| `nps_get_activities` | Curated things to do and points of interest for a park: title, description, duration, accessibility, location, fee/pet/reservation flags, season. | `parkCode`, `stateCode`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
 | `nps_find_events` | Scheduled events at a park within a date range: title, description, dates/times, location, category, fee, registration/info URLs. | `parkCode`, `stateCode`, `dateStart`, `dateEnd`, `query`, `pageSize`, `pageNumber` | `readOnlyHint: true`, `openWorldHint: true` |
 
 ### Resources
@@ -148,11 +148,10 @@ input: z.object({
     .string()
     .optional()
     .describe(
-      'Free-text search across park names and descriptions (e.g. "yosemite", "civil war", "redwood"). Upstream full-text search. Omit to browse by state. At least one of query or stateCode is recommended; with neither, returns the first page of all ~470 NPS sites.',
+      'Free-text search across park names and descriptions (e.g. "yosemite", "civil war", "redwood"). Exact parkCode or name matches lead, then other name matches, then parks that only mention the term in their description — ranked across every match before start/limit apply. Omit to browse by state. At least one of query or stateCode is recommended; with neither, returns the first page of all ~470 NPS sites.',
     ),
   stateCode: z
     .string()
-    .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
     .optional()
     .describe(
       'Two-letter US state/territory code, or comma-separated list (e.g. "CA", "WY,MT,ID"). Filters to parks located in those states. Combine with query to narrow.',
@@ -161,7 +160,7 @@ input: z.object({
     .string()
     .optional()
     .describe(
-      'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match applied locally (the API has no activity param) across every site matching query/stateCode, then paginated with start/limit — so totalCount is the true count of matching parks, not a per-page tally. Use nps_get_park to see a park\'s full activity list.',
+      'Filter to parks offering an activity, matched against each park\'s activities list (e.g. "hiking", "camping", "stargazing"). Case-insensitive substring match, combined with query/stateCode and applied before start/limit, so totalCount counts every matching park, not one page. Use nps_get_park to see a park\'s full activity list.',
     ),
   limit: z
     .number()
@@ -191,11 +190,11 @@ output: z.object({
         designation: z.string().describe('Site type (e.g. "National Park", "National Monument", "National Historic Site"). Empty string for sites without a designation.'),
         states: z.string().describe('Comma-separated state codes the park spans (e.g. "CA", "WY,MT,ID").'),
         description: z.string().describe('Short park description.'),
-        latitude: z.number().nullable().describe('Center latitude (decimal degrees), or null if the park record has no coordinates. The NPS API returns this as a string — the service coerces to float (empty string → null). Feed to nws-weather / open-meteo for a forecast.'),
+        latitude: z.number().nullable().describe('Center latitude (decimal degrees), or null if the park record has no coordinates.'),
         longitude: z.number().nullable().describe('Center longitude (decimal degrees), or null if absent. Same string→float coercion as latitude.'),
         activities: z.array(z.string()).describe('Activity names available at the park (e.g. "Hiking", "Camping"). NPS returns activities as [{id, name}] objects — the service extracts the name strings. May be empty.'),
         entranceFee: z.string().nullable().describe('Lowest standard entrance fee as a dollar string (e.g. "35.00"), or null if the park is fee-free or lists no fee. Derived by the service from `entranceFees[0].cost` (the first fee entry, typically the per-vehicle fee). Full fee/pass breakdown is in nps_get_park.'),
-        url: z.string().describe('Park\'s official NPS.gov page — the source for everything trimmed from this summary.'),
+        url: z.string().describe('Park\'s official NPS.gov page, with fuller detail than this summary.'),
       }),
     )
     .describe('Matching parks, each carrying the parkCode needed to chain into the detail tools.'),
@@ -206,20 +205,21 @@ output: z.object({
 
 ```ts
 enrichment: {
-  totalCount: z.number().describe('Total parks matching the query/state filter before the limit was applied (from the API envelope total).'),
+  totalCount: z.number().describe('Total parks matching every filter, before start/limit were applied.'),
+  truncated: z.boolean().optional().describe('True when more parks matched than this response returned; absent on a complete result.'),
   shown: z.number().optional().describe('Number of parks returned in this response (populated when the result set was capped by limit).'),
   cap: z.number().optional().describe('The limit applied to this response (populated when results were truncated).'),
-  appliedFilters: z.string().describe('Echo of the filters as the server applied them (query / stateCode / activity), so the agent can see what was searched.'),
-  notice: z.string().optional().describe('Guidance when no parks matched — suggests broadening the query, checking the state code, or dropping the activity filter.'),
+  appliedFilters: z.string().describe('Echo of the filters as applied (query / stateCode / activity).'),
+  notice: z.string().optional().describe('Guidance on the result set: how to broaden a search that matched nothing, the start value for the next page when more parks matched, the way back when start ran past the end, and a best-effort disclosure when the activity scan could not cover every site.'),
 },
 enrichmentTrailer: {
-  totalCount: { label: 'Total Matches' },
+  truncated: { label: 'Truncated' },
   shown: { label: 'Shown' },
   cap: { label: 'Limit' },
   appliedFilters: { label: 'Filters' },
 },
 ```
-- `ctx.enrich.total(totalCount)` for the required total; `ctx.enrich.truncated({ shown, cap })` **only when** the matched total exceeds the returned count (this is what keeps `shown`/`cap` optional-and-unset on full results, avoiding -32007).
+- `ctx.enrich.total(totalCount)` for the required total — the trailer renders it as `**N total**` and ignores any label, so `enrichmentTrailer` declares none; `ctx.enrich.truncated({ shown, cap })` **only when** more parks matched than `start` plus the returned count. It writes `truncated: true`, `shown`, and `cap`, all declared optional, so a full result carries none of them (declaring them required would throw -32007) and a capped page carries all three on both surfaces — an undeclared key is stripped by the output parse (Decisions Log §9).
 - Empty result → `ctx.enrich.notice("No NPS sites matched <filters>. Broaden the query, verify the two-letter state code, or drop the activity filter. Coverage is US NPS sites only — not state parks or Forest Service / BLM land.")`.
 
 **Errors:**
@@ -243,11 +243,11 @@ Empty matches are **not** an error — return `parks: []` + the notice. (Upstrea
 ```ts
 input: z.object({
   parkCode: z
-    .array(z.string().regex(/^[a-z]{4}$/))
+    .array(z.string())
     .min(1)
     .max(10)
     .describe(
-      'One to ten park codes (each a 4-letter lowercase code like "yose", "grca", "zion"). Get codes from nps_find_parks. Multiple codes are fetched in a single request.',
+      'One to ten park codes per call, each a 4-letter lowercase code (e.g. "yose", "grca", "zion"). Get codes from nps_find_parks.',
     ),
   fields: z
     .array(z.enum(['activities', 'topics', 'fees', 'hours', 'contacts', 'directions', 'images']))
@@ -272,9 +272,9 @@ output: z.object({
         description: z.string().describe('Full park description.'),
         latitude: z.number().nullable().describe('Center latitude (decimal degrees) or null. NPS returns as string — service coerces (empty string → null).'),
         longitude: z.number().nullable().describe('Center longitude (decimal degrees) or null. Same coercion as latitude.'),
-        weatherOverview: z.string().nullable().describe('NPS free-text weather/seasonal overview for the park (the `weatherInfo` field), or null. For an actual forecast, feed the coordinates to nws-weather or open-meteo.'),
-        directionsInfo: z.string().nullable().describe('Free-text driving/access directions, or null.'),
-        directionsUrl: z.string().nullable().describe('NPS directions page URL, or null.'),
+        weatherOverview: z.string().nullable().describe('NPS free-text weather/seasonal overview for the park, or null. General seasonal guidance, not a forecast.'),
+        directionsInfo: z.string().optional().nullable().describe('Free-text driving/access directions, or null when NPS publishes none (included unless fields excludes "directions").'),
+        directionsUrl: z.string().optional().nullable().describe('NPS directions page URL, or null when NPS publishes none (included unless fields excludes "directions").'),
         url: z.string().describe('Park\'s official NPS.gov page.'),
         activities: z.array(z.string()).optional().describe('Activity names (included unless fields excludes "activities"). NPS returns [{id, name}] objects — service extracts the name strings.'),
         topics: z.array(z.string()).optional().describe('Topic names — what the park is about, e.g. "Volcanoes", "Civil War" (included unless fields excludes "topics"). Same {id, name} → name extraction as activities.'),
@@ -330,7 +330,7 @@ output: z.object({
           }))
           .optional()
           .describe('Representative park images (included unless fields excludes "images"). Capped at 5 by the service; imagesTruncated flags when the park has more. May be empty.'),
-        imagesTruncated: z.boolean().optional().describe('True when the upstream image list exceeded the 5-item cap — the park url has the rest. Present only when the images section is included. See Decisions Log §15.'),
+        imagesTruncated: z.boolean().optional().describe('True when the park has more than the 5 images returned here; the park url has the full set. Present only when the images section is included.'),
       }),
     )
     .describe('Requested parks with trip-planning detail.'),
@@ -342,8 +342,8 @@ output: z.object({
 ```ts
 enrichment: {
   requestedCount: z.number().describe('Number of park codes requested.'),
-  returnedCount: z.number().describe('Number of parks the API returned.'),
-  missingCodes: z.array(z.string()).optional().describe('Requested park codes the API returned no record for — likely invalid/misspelled codes. Populated only when some codes did not resolve.'),
+  returnedCount: z.number().describe('Number of requested parks found.'),
+  missingCodes: z.array(z.string()).optional().describe('Requested park codes that matched no NPS site — likely misspelled. Populated only when some codes did not resolve.'),
   notice: z.string().optional().describe('Guidance when one or more codes did not resolve, or when none did.'),
 },
 enrichmentTrailer: {
@@ -353,12 +353,15 @@ enrichmentTrailer: {
 },
 ```
 - Cross-reference returned `parkCode`s against the request; any requested-but-absent → `missingCodes` + a notice ("Codes not found: …. Verify with nps_find_parks — codes are 4-letter lowercase like \"yose\".").
+- Every section `fields` excludes is **absent** from the park, `directions` included — `null` on `directionsInfo`/`directionsUrl` means only "requested, and NPS publishes none". `weatherOverview` has no `fields` toggle and is always present.
+- `weatherOverview` (NPS's `weatherInfo`), `directionsInfo`, and fee/pass `description` are NPS-authored and occasionally carry HTML (`<a>` links). A value with a tag or entity reference is converted to plain text the way `/thingstodo` and `/events` text is; a markup-free value is returned unchanged, so its line breaks survive. Only markup opens a tag — `<` followed by a letter, `/`, `!`, or `?` — so prose like `(<20 C)` or `p < 0.05` is kept, and an HTML comment (`<!-- … -->`, NPS's way of hiding stale text) is removed with its contents.
 
 **Errors:**
 
 | reason | code | when | recovery |
 |:-------|:-----|:-----|:---------|
-| `no_parks_found` | `NotFound` | The API returned zero records for every requested code | `None of the requested park codes resolved. Use nps_find_parks to look up the correct 4-letter code (e.g. "grca" for Grand Canyon).` |
+| `invalid_park_code` | `ValidationError` | A `parkCode` element isn't 4 lowercase letters (checked before any upstream call; the message names only the malformed codes) | `Provide each park code as a 4-letter lowercase code (e.g. "yose"). Look them up with nps_find_parks.` |
+| `no_parks_found` | `NotFound` | None of the requested codes matched an NPS site | `None of the requested park codes resolved. Use nps_find_parks to look up the correct 4-letter code (e.g. "grca" for Grand Canyon).` |
 
 Partial resolution (some codes hit, some miss) is **not** an error — return what resolved + `missingCodes`. Only a fully-empty result throws `no_parks_found`.
 
@@ -376,22 +379,20 @@ Partial resolution (some codes hit, some miss) is **not** an error — return wh
 input: z.object({
   parkCode: z
     .string()
-    .regex(/^[a-z]{4}(,[a-z]{4})*$/)
     .optional()
-    .describe('Park code, or comma-separated list (e.g. "glac", "yose,zion"). Get codes from nps_find_parks. Provide parkCode or stateCode; with neither, returns recent alerts service-wide.'),
+    .describe('Park code, or comma-separated list (e.g. "glac", "yose,zion") — 4-letter lowercase codes. Get codes from nps_find_parks. Provide parkCode or stateCode; with neither, returns recent alerts service-wide.'),
   stateCode: z
     .string()
-    .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
     .optional()
     .describe('Two-letter state code, or comma-separated list (e.g. "MT", "WY,MT,ID"). Returns alerts for all NPS sites in those states — use when you want a statewide "what\'s closed" sweep rather than one park.'),
   category: z
     .enum(['Danger', 'Caution', 'Information', 'Park Closure'])
     .optional()
-    .describe('Filter to one alert category. "Danger" and "Park Closure" are the high-priority ones for trip safety. Applied locally (the API has no category param) across every alert matching parkCode/stateCode/query, then paginated with start/limit — so totalCount is the true count of matching alerts, not a per-page tally. Omit to see all categories (the default — closures and hazards should not be missed). Live categories observed: Danger, Caution, Information, Park Closure.'),
+    .describe('Filter to one alert category. "Danger" and "Park Closure" are trip-affecting. Combined with parkCode/stateCode/query and applied before start/limit, so totalCount counts every matching alert, not one page. Omit to see all categories.'),
   query: z
     .string()
     .optional()
-    .describe('Free-text search within alert titles/descriptions (e.g. "road", "wildfire", "trail"). Upstream full-text filter.'),
+    .describe('Free-text search within alert titles/descriptions (e.g. "road", "wildfire", "trail").'),
   limit: z
     .number()
     .int()
@@ -417,14 +418,14 @@ output: z.object({
       z.object({
         id: z.string().describe('Alert ID.'),
         parkCode: z.string().describe('Park code the alert belongs to — useful when querying by state across multiple parks.'),
-        category: z.string().describe('Alert category: "Danger", "Park Closure", "Caution", or "Information". Treat Danger and Park Closure as trip-affecting.'),
+        category: z.string().describe('Alert category: "Danger", "Park Closure", "Caution", or "Information". Danger and Park Closure are trip-affecting.'),
         title: z.string().describe('Short alert headline (e.g. "Tioga Road Closed for the Season").'),
         description: z.string().describe('Full alert text — what is affected and any guidance.'),
         url: z.string().nullable().describe('Link to more detail on NPS.gov, or null. NPS returns empty string "" when absent — service normalizes to null.'),
-        lastIndexedDate: z.string().nullable().describe('When NPS last updated/indexed this alert, or null. Format from the API is "YYYY-MM-DD 00:00:00.0" (space-delimited, with fractional seconds suffix) — service may strip to "YYYY-MM-DD" for readability. The recency signal — a stale date may mean the condition has changed; verify against the park page.'),
+        lastIndexedDate: z.string().nullable().describe('When NPS last updated/indexed this alert (YYYY-MM-DD), or null. The recency signal — a stale date may mean the condition has changed.'),
       }),
     )
-    .describe('Current alerts, sorted most-recent first by lastIndexedDate. An empty array with totalCount 0 means no active alerts — good news, not an error; with a non-zero totalCount it means start paged past the end of the matches. The notice says which.'),
+    .describe('Current alerts, most-recent first. Empty with totalCount 0 means no active alerts match the request; empty with a non-zero totalCount means start ran past the end of the matches.'),
 }),
 ```
 
@@ -433,22 +434,23 @@ output: z.object({
 ```ts
 enrichment: {
   totalCount: z.number().describe('Total alerts matching the filter before the limit was applied.'),
+  truncated: z.boolean().optional().describe('True when more alerts matched than this response returned; absent on a complete result.'),
   shown: z.number().optional().describe('Alerts returned in this response (populated when capped by limit).'),
   cap: z.number().optional().describe('Limit applied (populated when results were truncated).'),
-  categoryBreakdown: z.string().describe('Count of returned alerts per category (e.g. "Closure: 3, Caution: 1, Information: 2") — lets the agent gauge severity without scanning every alert.'),
+  categoryBreakdown: z.string().describe('Count of returned alerts per category, most severe first (e.g. "Park Closure: 3, Caution: 1, Information: 2").'),
   appliedFilters: z.string().describe('Echo of parkCode/stateCode/category/query as applied.'),
-  notice: z.string().optional().describe('Message when the page is empty — states which case it is: good news (totalCount 0, the park reports nothing closed/hazardous right now) or a paging artifact (start ran past the end of a non-empty matched set).'),
+  notice: z.string().optional().describe('Guidance on the result set: whether an empty page means no active alerts match (totalCount 0) or start ran past the end of the matches, the start value for the next page when more alerts matched, and a best-effort disclosure when the category filter could not cover every alert.'),
 },
 enrichmentTrailer: {
-  totalCount: { label: 'Total Alerts' },
+  truncated: { label: 'Truncated' },
   shown: { label: 'Shown' },
   cap: { label: 'Limit' },
   categoryBreakdown: { label: 'By category' },
   appliedFilters: { label: 'Filters' },
 },
 ```
-- Sort by `lastIndexedDate` desc in the handler before filtering/slicing (the API does not guarantee order). That sort is the tool's single ordering contract — `format()` renders the handler's order as-is.
-- Empty page, branching on `total` — `total === 0` → `ctx.enrich.notice("No active alerts for <filters>. The park currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.")`; `total > 0` → a paging-artifact notice naming `start=0` as the way back. `format()` asserts neither (it never sees `totalCount`) and points at the notice instead.
+- No local sort. `/alerts` returns records `lastIndexedDate`-descending and its pages concatenate in that order (Decisions Log §4); that upstream order is the tool's single ordering contract. The `category` filter and the local slice keep it, and `format()` renders it as-is.
+- Empty page, branching on `total` — `total === 0` with no alert at all for the location and no `query` → `ctx.enrich.notice("No active alerts for <filters>. NPS currently reports nothing closed or hazardous. Closures and road conditions change daily — re-check before departure.")`; `total === 0` under a `category` or `query` that excluded other alerts → "No active alerts match <filters>; alerts outside these filters may still be active. Drop category and query to see every alert." (never an all-clear: `category: "Information"` matching nothing says nothing about closures); `total > 0` → a paging-artifact notice naming `start=0` as the way back. `format()` asserts neither (it never sees `totalCount`) and points at the notice instead.
 - `ctx.enrich.truncated()` writes a `notice` internally (last-wins), so the handler collects every notice fragment (best-effort-scan caveat, empty-result guidance, next-page pointer) and emits exactly one — via `truncated({ guidance })` when a page follows, else `notice()`.
 
 **Errors:**
@@ -460,7 +462,7 @@ enrichmentTrailer: {
 
 Empty results are never an error.
 
-**`format()`:** `## N active alerts` (or "No alerts in this response. See the notice for what this means." — `format()` receives only the domain payload, never `totalCount`, so it defers the all-clear-vs-paging-artifact call to the notice instead of guessing). Renders `alerts` in the handler's order (most-recent-first) — **no re-sort**, so `content[]` and `structuredContent` clients read the same order; per alert — `### [{category}] {title}` · `**Park:** {parkCode} | **Updated:** {lastIndexedDate}` · description · `[Details]({url})` when present (url is null when empty). Category and recency lead every entry, so severity stays scannable without reordering the list.
+**`format()`:** `## N active alerts` (or "No alerts in this response. See the notice for what this means." — `format()` receives only the domain payload, never `totalCount`, so it defers the all-clear-vs-paging-artifact call to the notice instead of guessing). Renders `alerts` in the order `/alerts` returned them (most-recent-first) — **no re-sort**, so `content[]` and `structuredContent` clients read the same order; per alert — `### [{category}] {title}` · `**Park:** {parkCode} | **Updated:** {lastIndexedDate}` · description · `[Details]({url})` when present (url is null when empty). Category and recency lead every entry, so severity stays scannable without reordering the list.
 
 ---
 
@@ -474,18 +476,16 @@ Empty results are never an error.
 input: z.object({
   parkCode: z
     .string()
-    .regex(/^[a-z]{4}(,[a-z]{4})*$/)
     .optional()
-    .describe('Park code, or comma-separated list (e.g. "zion"). Get codes from nps_find_parks. Provide parkCode or stateCode.'),
+    .describe('Park code, or comma-separated list (e.g. "zion") — 4-letter lowercase codes. Get codes from nps_find_parks. Provide parkCode or stateCode.'),
   stateCode: z
     .string()
-    .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
     .optional()
     .describe('Two-letter state code, or comma-separated list. Returns campgrounds across all NPS sites in those states.'),
   query: z
     .string()
     .optional()
-    .describe('Free-text search across campground names/descriptions (e.g. "river", "group", "rv"). Upstream full-text filter.'),
+    .describe('Free-text search across campground names/descriptions (e.g. "river", "group", "rv").'),
   limit: z
     .number()
     .int()
@@ -522,22 +522,22 @@ output: z.object({
         reservationUrl: z.string().nullable().describe('Booking URL (often recreation.gov), or null.'),
         fee: z.string().nullable().describe('Lowest campground fee as a dollar string (e.g. "30.00"), or null if free / unspecified.'),
         amenities: z.object({
-          potableWater: z.boolean().describe('Drinking water available on site.'),
-          showers: z.boolean().describe('Showers available.'),
-          dumpStation: z.boolean().describe('RV dump station available.'),
-          rvAllowed: z.boolean().describe('RVs permitted (from accessibility.rvAllowed — "1" → true, "0" → false).'),
-          toilets: z.boolean().describe('Toilets (flush or vault) available.'),
-          trashCollection: z.boolean().describe('Trash/recycling collection on site.'),
-        }).describe('Key amenities as booleans. NPS amenities fields are mixed types: `potableWater`, `showers`, and `toilets` are arrays (e.g. ["Yes - seasonal", "None"]) — normalize: any element starting with "Yes" → true. `dumpStation` and `trashRecyclingCollection` are strings ("Yes"/"No"/"Yes - seasonal") — normalize to bool. `rvAllowed` lives in the `accessibility` object as "1"/"0". The campground\'s NPS page has the full amenity list.'),
-        accessibility: z.string().nullable().describe('Free-text accessibility summary from `accessibility.adaInfo`, or null if absent/empty. The `accessibility` field is a dict object — service extracts `adaInfo` as the primary human-readable summary.'),
-        url: z.string().nullable().describe('Campground\'s NPS.gov page, or null — the source for the full amenity/site detail trimmed here.'),
+          potableWater: z.boolean().nullable().describe('Drinking water available on site, or null when NPS published no value.'),
+          showers: z.boolean().nullable().describe('Showers available, or null when NPS published no value.'),
+          dumpStation: z.boolean().nullable().describe('RV dump station available, or null when NPS published no value.'),
+          rvAllowed: z.boolean().nullable().describe('RVs permitted (from accessibility.rvAllowed — "1" → true, "0" → false, empty → null).'),
+          toilets: z.boolean().nullable().describe('Toilets of any type (flush, vault, portable, composting) available, or null when NPS published no value.'),
+          trashCollection: z.boolean().nullable().describe('Trash/recycling collection on site, or null when NPS published no value.'),
+        }).describe('Key amenities: true, false, or null when NPS published no value (unknown, not absent). The campground\'s NPS page has the full amenity list.'),
+        accessibility: z.string().nullable().describe('Free-text accessibility summary, or null if NPS publishes none.'),
+        url: z.string().nullable().describe('Campground\'s NPS.gov page with the full amenity and site detail, or null.'),
       }),
     )
     .describe('Campgrounds at the requested park(s)/state(s).'),
 }),
 ```
 
-**Enrichment:** `totalCount` (required), `shown`/`cap` (optional, on truncation), `appliedFilters`, `notice` (empty-result guidance: "No campgrounds found for <filters>. The park may have no NPS-managed campgrounds, or try a broader state query. Some parks list lodging/backcountry permits instead — see the park page via nps_get_park."). Same `ctx.enrich.total` + `ctx.enrich.truncated` discipline.
+**Enrichment:** `totalCount` (required), `truncated`/`shown`/`cap` (optional, on truncation, labeled `Truncated`/`Shown`/`Limit` in the trailer), `appliedFilters`, `notice` (next-page `start` when truncated; empty-result guidance: "No campgrounds found for <filters>. The park may have no NPS-managed campgrounds, or try a broader state query. Some parks list lodging/backcountry permits instead — see the park page via nps_get_park."). Same `ctx.enrich.total` + `ctx.enrich.truncated` discipline.
 
 **Errors:**
 
@@ -546,7 +546,16 @@ output: z.object({
 | `invalid_park_code` | `ValidationError` | A `parkCode` token isn't 4 lowercase letters | `Provide 4-letter lowercase park codes (e.g. "zion"), comma-separated. Look them up with nps_find_parks.` |
 | `invalid_state_code` | `ValidationError` | A `stateCode` token isn't two letters | `Provide two-letter state codes, comma-separated.` |
 
-**`format()`:** per campground — `### {name}` · `**Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` · amenity chips for the true booleans (e.g. "Potable water · Showers · RV hookups") · `**Fee:** ${fee}` · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the hookup/water amenities prominently.
+**Amenity normalization** (Decisions Log §5 — a missing upstream value is `null`, never a guess). NPS amenity fields are mixed types: `potableWater`, `showers`, and `toilets` are arrays listing the amenity's type/season (`["Yes - seasonal"]`, `["Flush Toilets - year round"]`, `["Hot - Year Round"]`) or a negative (`["None"]`, `["No water"]`, `["No Toilets"]`); `dumpStation` and `trashRecyclingCollection` are single strings (`"Yes - seasonal"`, `"No"`). Each field classifies as:
+
+- `null` — the upstream value is empty (`""`, `[]`, or only blank elements).
+- negative element — a value led by the word `No` (`No`, `No water`, `No Toilets`), or `None` / `N/A` / `Not available`.
+- `not potable` — an element containing `not potable` or `non-potable` is negative. NPS splits "Water, but not potable" at its comma into `["Water", " but not potable"]`, so a fragment opening with `but` also negates the element before it; a self-contained `"Water, but not potable"` negates only itself, so `["Yes - seasonal", "Water, but not potable"]` stays `true`.
+- `true` when any remaining element is a real value, so a mixed `["Vault Toilets - year round", "No Toilets"]` or `["Coin-Operated - Seasonal", "None"]` stays `true`; otherwise `false`.
+
+`rvAllowed` comes from `accessibility.rvAllowed` (`"1"`/`"0"`), `null` when empty.
+
+**`format()`:** per campground — `### {name}` · `**Park:** {parkCode} | **ID:** {id} | **Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` · description · `**Amenities:**` with an explicit value per amenity (`Potable water: Yes · Showers: No · … · Trash collection: Unknown` — `Unknown` for a `null` amenity, never `No`) · `**Fee:** ${fee}` · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `**Coordinates:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the hookup/water amenities prominently.
 
 ---
 
@@ -560,18 +569,16 @@ output: z.object({
 input: z.object({
   parkCode: z
     .string()
-    .regex(/^[a-z]{4}$/)
     .optional()
     .describe('A single 4-letter lowercase park code (e.g. "acad"). Get it from nps_find_parks. This endpoint takes one park code (not a list). Provide parkCode or stateCode.'),
   stateCode: z
     .string()
-    .regex(/^[A-Za-z]{2}$/)
     .optional()
     .describe('A single two-letter state code (e.g. "ME"). Returns curated activities across NPS sites in that state.'),
   query: z
     .string()
     .optional()
-    .describe('Free-text search across activity titles/descriptions (e.g. "sunrise", "hike", "tour"). Upstream full-text filter.'),
+    .describe('Free-text search across activity titles/descriptions (e.g. "sunrise", "hike", "tour").'),
   limit: z
     .number()
     .int()
@@ -615,15 +622,17 @@ output: z.object({
 }),
 ```
 
-**Enrichment:** `totalCount` (required), `shown`/`cap` (optional, on truncation), `appliedFilters`, `notice` ("No curated activities found for <filters>. Not every park has a curated things-to-do list — try nps_get_park for the park\'s activity tags and description."). Same total/truncation discipline.
+**Enrichment:** `totalCount` (required), `truncated`/`shown`/`cap` (optional, on truncation, labeled `Truncated`/`Shown`/`Limit` in the trailer), `appliedFilters`, `notice` (next-page `start` when truncated; empty result: "No curated activities found for <filters>. Not every park has a curated things-to-do list — try nps_get_park for the park\'s activity tags and description."). Same total/truncation discipline.
 
 **Errors:**
 
 | reason | code | when | recovery |
 |:-------|:-----|:-----|:---------|
-| `missing_filter` | `ValidationError` | Neither `parkCode` nor `stateCode` provided | `Provide a parkCode (e.g. "acad") or stateCode (e.g. "ME"). This endpoint requires at least one location filter.` |
+| `missing_filter` | `ValidationError` | Neither `parkCode` nor `stateCode` provided (an empty string counts as omitted) | `Provide a parkCode (e.g. "acad") or stateCode (e.g. "ME"). At least one location filter is required.` |
+| `invalid_park_code` | `ValidationError` | `parkCode` isn't a single 4-letter lowercase code (a comma list included) | `Provide one 4-letter lowercase park code (e.g. "acad"), not a list. Look it up with nps_find_parks.` |
+| `invalid_state_code` | `ValidationError` | `stateCode` isn't a single two-letter code | `Provide one two-letter state code (e.g. "ME"), not a list.` |
 
-(`/thingstodo` returns a large undifferentiated list with no filter; require one to keep results meaningful. parkCode/stateCode format is enforced by the regex at the schema edge.)
+(`/thingstodo` returns a large undifferentiated list with no filter; require one to keep results meaningful. Code format is checked in the handler, after `missing_filter`, so a malformed code gets its declared reason and recovery — Decisions Log §17.)
 
 **`format()`:** per activity — `### {title}` · `**Duration:** {duration} | **Season:** {season}` · shortDescription · `**Location:** {location}` · flags line ("Reservation required · Pets OK · Fee: {feeDescription}") · `**Accessibility:** …` · `[Details]({url})`.
 
@@ -639,28 +648,24 @@ output: z.object({
 input: z.object({
   parkCode: z
     .string()
-    .regex(/^[a-z]{4}(,[a-z]{4})*$/)
     .optional()
-    .describe('Park code, or comma-separated list (e.g. "yell"). Get codes from nps_find_parks. Provide parkCode or stateCode.'),
+    .describe('Park code, or comma-separated list (e.g. "yell") — 4-letter lowercase codes. Get codes from nps_find_parks. Provide parkCode or stateCode.'),
   stateCode: z
     .string()
-    .regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/)
     .optional()
     .describe('Two-letter state code, or comma-separated list. Returns events across NPS sites in those states.'),
   dateStart: z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional()
     .describe('Start of the date window (YYYY-MM-DD). Combine with dateEnd to bound the search (e.g. a weekend). Omit for upcoming events from today.'),
   dateEnd: z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional()
     .describe('End of the date window (YYYY-MM-DD). Use with dateStart.'),
   query: z
     .string()
     .optional()
-    .describe('Free-text search across event titles/descriptions (e.g. "ranger", "astronomy", "guided"). Upstream full-text filter.'),
+    .describe('Free-text search across event titles/descriptions (e.g. "ranger", "astronomy", "guided").'),
   pageSize: z
     .number()
     .int()
@@ -687,12 +692,12 @@ output: z.object({
         id: z.string().describe('Event ID (from the `id` field, which is a UUID-like string; also available as `eventid`).'),
         title: z.string().describe('Event title.'),
         parkCode: z.string().nullable().describe('Park code the event belongs to. Sourced from the `sitecode` field — NPS event records do NOT have a `parkCode` field; `sitecode` carries the 4-letter park code. Null if absent.'),
-        description: z.string().describe('Event description (HTML stripped to plain text in the handler — NPS event descriptions contain HTML markup).'),
+        description: z.string().describe('Event description as plain text.'),
         location: z.string().nullable().describe('Event location within the park (free text), or null/empty — service normalizes empty to null.'),
         dateStart: z.string().nullable().describe('Event start date (YYYY-MM-DD, from `datestart`), or null. For a recurring event this is the series anchor, which can predate the requested window — use occurrenceDates.'),
         dateEnd: z.string().nullable().describe('Event end date (YYYY-MM-DD, from `dateend`), or null. For a recurring event this is the anchor, not the last occurrence.'),
-        occurrenceDates: z.array(z.string()).describe('Occurrence dates (YYYY-MM-DD) intersected with the requested dateStart/dateEnd window (all remaining occurrences when no window is requested). NPS returns each record\'s `dates[]` independent of the query window — see Decisions Log §16.'),
-        isRecurring: z.boolean().describe('True for a recurring series, coerced from the `isrecurring` string. Explains a single frozen dateStart/dateEnd against a months-long occurrenceDates list.'),
+        occurrenceDates: z.array(z.string()).describe('Dates (YYYY-MM-DD) the event actually occurs within the requested dateStart/dateEnd window; with no window, every remaining occurrence from today through the series end. Empty when the window matches no occurrence. For a recurring series, dateStart/dateEnd hold the series anchor instead.'),
+        isRecurring: z.boolean().describe('True when this is a recurring series (multiple occurrence dates); dateStart/dateEnd then hold the series anchor and occurrenceDates the actual dates.'),
         times: z.array(z.object({
           timeStart: z.string().describe('Start time (e.g. "02:00 PM").'),
           timeEnd: z.string().describe('End time (e.g. "02:30 PM").'),
@@ -708,13 +713,13 @@ output: z.object({
 }),
 ```
 
-**Enrichment:** `totalCount` (required — from the envelope `total`), `shown`/`cap` (optional, on truncation), `appliedFilters` (incl. the date window echo), `notice` (empty-result: "No events found for <filters> in <date window>. Widen the date range, drop the query filter, or check the park calendar via the park page. The events feed is sparser than alerts/campgrounds."). The events envelope can carry an `errors[]` array even on 200 — if non-empty, fold a warning into the notice rather than throwing.
+**Enrichment:** `totalCount` (required — from the envelope `total`), `truncated`/`shown`/`cap` (optional, set while more matching events follow this page, labeled `Truncated`/`Shown`/`Page Size` in the trailer), `appliedFilters` (incl. the date window echo), `notice` (next `pageNumber` when truncated; empty-result: "No events found for <filters, incl. the date window>. Widen the date range, drop the query filter, or check the park calendar via the park page. Many parks list few or no events."). The events envelope can carry an `errors[]` array even on 200 — if non-empty, fold a warning into the notice rather than throwing ("NPS reported: <errors>.", after "Events returned, but NPS reported errors for this request." when events came back).
 
 **Errors:**
 
 | reason | code | when | recovery |
 |:-------|:-----|:-----|:---------|
-| `invalid_date` | `ValidationError` | `dateStart`/`dateEnd` not `YYYY-MM-DD`, not a real calendar date (e.g. `2026-02-31`), or `dateEnd` < `dateStart` | `Provide dates as real YYYY-MM-DD calendar dates with dateEnd on or after dateStart (e.g. dateStart "2026-07-04", dateEnd "2026-07-06").` |
+| `invalid_date` | `ValidationError` | `dateStart`/`dateEnd` not `YYYY-MM-DD`, not a real calendar date (e.g. `2026-02-31`), or `dateEnd` < `dateStart`. Checked in that order, before any upstream call; an empty string counts as omitted | `Provide dates as real YYYY-MM-DD calendar dates with dateEnd on or after dateStart (e.g. dateStart "2026-07-04", dateEnd "2026-07-06").` |
 | `invalid_park_code` | `ValidationError` | A `parkCode` token isn't 4 lowercase letters | `Provide 4-letter lowercase park codes (e.g. "yell"), comma-separated. Look them up with nps_find_parks.` |
 | `invalid_state_code` | `ValidationError` | A `stateCode` token isn't two letters | `Provide two-letter state codes (e.g. "WY"), comma-separated.` |
 
@@ -764,9 +769,9 @@ No single tool makes ≥3 upstream calls — this is a flat multi-endpoint surfa
 | **Array params** | `parkCode`, `stateCode` are **array** params on `/parks`, `/alerts`, `/campgrounds`, `/events` — comma-join for a single multi-target request. `/thingstodo` takes **single-string** `parkCode`/`stateCode`. |
 | **Pagination** | `start` (0-based offset) + `limit` on most endpoints; `/events` uses `pageNumber` (1-based) + `pageSize`. |
 | **`limit` ceiling** | **None enforced** — the API returns `min(limit, total)` (verified 2026-07-15: `/thingstodo?limit=2000` → 2000 of 3561). `/parks?limit=1000` returns all 474 and `/alerts?limit=1000` all 651, so either corpus is one request away. |
-| **Unsupported params** | **Silently ignored, never rejected** — `/parks?activity=…` and `/alerts?category=…` return results identical to the call without them. An unsupported filter cannot be detected from the response; it must be applied locally (Decisions Log §7). |
+| **Unsupported params** | Unsupported **filters are silently ignored** — `/parks?activity=…` and `/alerts?category=…` return results identical to the call without them. An unsupported filter cannot be detected from the response; it must be applied locally (Decisions Log §7). Not every param is ignored: `/alerts?sort=…` returns HTTP 400 for any value. |
 | **Error shape** | `{ "error": { "code": "...", "message": "..." } }` on 403; `400` on malformed params. |
-| **Sort** | `/parks`, `/campgrounds`, `/thingstodo`, `/events` accept a `sort` param; the server sorts alerts by `lastIndexedDate` locally for recency. |
+| **Sort** | `/parks`, `/campgrounds`, `/thingstodo`, `/events` accept a `sort` param. `/alerts` rejects `sort` (HTTP 400) and returns records `lastIndexedDate`-descending on its own, with pages concatenating in that order; the server relies on that order and never sorts alerts locally (Decisions Log §4). |
 
 ---
 
@@ -791,9 +796,11 @@ Each step is independently testable.
 
 3. **`nps_get_park` batches ≤10 codes into one call.** `/parks` `parkCode` is an array param (confirmed in the live Swagger), so multi-park detail is one request, not N. Cap at 10 to bound payload (park records are large). Cross-reference returned vs. requested codes → `missingCodes`.
 
-4. **`nps_get_alerts` is the headline tool: category + recency surfaced, not buried — under ONE ordering contract.** Output leads with `category` and `lastIndexedDate`; enrichment adds a `categoryBreakdown` count; the handler sorts most-recent-first (the API doesn't guarantee order). An empty page is framed in the notice, branching on `totalCount` — good news when nothing matched, a paging artifact when `start` ran past the end — and never asserted by `format()`, which cannot see `totalCount`. `category` is filtered locally because `/alerts` has no category query param (it takes `parkCode`/`stateCode`/`q` only — confirmed in Swagger). Live categories confirmed: Danger, Caution, Information, Park Closure (no bare "Closure" value seen — the design previously listed it incorrectly).
+4. **`nps_get_alerts` is the headline tool: category + recency surfaced, not buried — under ONE ordering contract.** Output leads with `category` and `lastIndexedDate`; enrichment adds a `categoryBreakdown` count; alerts arrive most-recent-first in `/alerts`' own order, which the handler never reorders. An empty page is framed in the notice, branching on `totalCount` — good news when nothing matched, a paging artifact when `start` ran past the end — and never asserted by `format()`, which cannot see `totalCount`. `category` is filtered locally because `/alerts` has no category query param (it takes `parkCode`/`stateCode`/`q` only — confirmed in Swagger). Live categories confirmed: Danger, Caution, Information, Park Closure (no bare "Closure" value seen — the design previously listed it incorrectly).
 
-   **Revised 2026-07-15 (reverses the original "`format()` orders Danger/Park Closure first").** `format()` re-sorted by category while the handler sorted by recency, so `content[]` clients (Claude Desktop) and `structuredContent` clients (Claude Code) received the same alerts in *different orders* — and the category order contradicted the tool description, the `alerts` output description, and the `limit` description, which all promise most-recent-first. One public ordering contract wins: recency, sorted once in the handler, rendered as-is by `format()`. Category stays prominent per row via the `### [{category}] {title}` heading, so severity is still scannable without reordering. `breakdown()` keeps its own `CATEGORY_ORDER` severity sort — that's the summary *string*, a distinct field, and is intentionally severity-ordered.
+   **Revised 2026-07-15 (reverses the original "`format()` orders Danger/Park Closure first").** `format()` re-sorted by category while the handler sorted by recency, so `content[]` clients (Claude Desktop) and `structuredContent` clients (Claude Code) received the same alerts in *different orders* — and the category order contradicted the tool description, the `alerts` output description, and the `limit` description, which all promise most-recent-first. One public ordering contract wins: recency, rendered as-is by `format()`. Category stays prominent per row via the `### [{category}] {title}` heading, so severity is still scannable without reordering. `breakdown()` keeps its own `CATEGORY_ORDER` severity sort — that's the summary *string*, a distinct field, and is intentionally severity-ordered.
+
+   **Recency comes from upstream (2026-09-23).** `/alerts` already returns records `lastIndexedDate`-descending, and its pages concatenate in that order: measured across the unfiltered set (626 alerts), seven state filters, a six-park list, and four `q` searches with zero out-of-order pairs, and `start` pages rejoining id-for-id into the single `limit=1000` order, ties included. A `sort` param is rejected with HTTP 400. The per-page handler sort this replaced was dead — it returned every page unchanged — and could never have repaired cross-page order anyway. Pulling the full matched set on every unfiltered call to sort it locally was rejected on cost (~28× the bytes of a 20-alert page service-wide, re-paid per page, and a best-effort cap past 1,000 alerts) for a defect that does not occur. The unfiltered path keeps passing `start`/`limit` straight upstream. Nothing documents the order as a contract, so it rests on this observation.
 
 5. **Record trimming: normalize the high-value bits, link the NPS page for the rest.** Park/campground records are deeply nested and free-text-heavy. The server flattens what agents filter on — amenity booleans, fee dollar-strings, reservable/first-come counts, coordinates, season — and surfaces `url` for the full record. It never fabricates structure from missing data: every derived field is nullable and a missing upstream value yields `null`, not a guess (framework checklist: "preserve uncertainty").
 
@@ -805,7 +812,7 @@ Each step is independently testable.
 
 8. **`nps_get_activities` keeps `/thingstodo`'s single-string param contract.** Unlike the array-param endpoints, `/thingstodo` takes a single `parkCode`/`stateCode` (Swagger). The schema reflects that (single value + a `missing_filter` error requiring at least one), rather than pretending it accepts a list — avoids a silent "only the first code worked" bug.
 
-9. **Truncation fields are optional; `totalCount` is required.** Per the cross-cutting rule: `ctx.enrich.total(n)` always (required `totalCount`); `ctx.enrich.truncated({ shown, cap })` only when the cap is hit, so `shown`/`cap` stay optional-and-unset on full results — declaring them required would throw -32007 on every non-truncated response.
+9. **Truncation fields are optional; `totalCount` is required.** Per the cross-cutting rule: `ctx.enrich.total(n)` always (required `totalCount`); `ctx.enrich.truncated({ shown, cap })` only when the cap is hit. It writes `truncated: true`, `shown`, and `cap`, so all three are declared optional and stay unset on full results — declaring them required would throw -32007 on every non-truncated response. All three must be *declared*: the framework parses the result against `output.extend(enrichment)`, which strips an undeclared key, so an undeclared `truncated` never reaches `structuredContent`, the `content[]` trailer, or the advertised `outputSchema` — the flag an agent branches on would be lost while the prose notice still disclosed the cap. The trailer labels it `Truncated`, beside `Shown` and `Limit`.
 
    **Extended 2026-07-15 — the "more pages exist" test is start-aware, and an empty page is not an empty result.** Truncation fires on `start + shown < total`, not `total > shown`: the latter misfires on the last page (start=50, 8 returned, total=58 is complete, not truncated) and would advertise a next page that doesn't exist. Every list tool's truncation `guidance` names the concrete next retrieval action (`start=<n>`, or `pageNumber=<n>` for `/events`), since a disclosure the agent can't act on is only half a disclosure. Correspondingly, an empty page with a **non-zero** `totalCount` is a paging artifact, not an absence — each tool's empty-result notice branches on `total > 0` and says so. Collapsing the two lets `nps_get_alerts` answer "nothing closed or hazardous" while `totalCount` reports active closures — the same false-empty reassurance the §7 revision removed, reached by over-paging instead of page-scoped filtering.
 
@@ -825,7 +832,9 @@ Each step is independently testable.
 
 16. **`nps_find_events` exposes window-intersected `occurrenceDates` + `isRecurring`; the raw `dates[]` is not the matched set (#2).** A date-window query returned recurring events rendered at their *series anchor* (`datestart`/`dateend`), so a July window could show May dates. Measured live 2026-07-16: each event's `dates[]` is "all remaining occurrences from today through `recurrencedateend`," **byte-identical across different requested windows** (`eventid 134460` returned the same 73 entries for an August window, a September window, and no filter) — NPS's `dateStart`/`dateEnd` filter which *events* appear, never each event's own `dates[]`. So exposing raw `dates[]` as "matched dates" would relabel a *different* piece of misleading data (a past or narrow window would intersect none of it). The service intersects `dates[]` with `[dateStart, dateEnd]` locally into `occurrenceDates` (reducing to the full remaining list when no window is requested) and surfaces the dropped `isrecurring` as `isRecurring`, so the anchor-vs-occurrence divergence is explained rather than dumped. `dateStart`/`dateEnd` keep their source mapping; additive output fields — backward-compatible, patch-level.
 
-17. **Park/state code format and calendar-date validity are validated in the handler, not at the Zod schema edge, so declared recovery hints reach the client (#3, #8).** The framework runs `def.input.parse(input)` and throws a raw `ZodError` **before** `ctx.fail`/`recoveryFor` exist (verified in `toolHandlerFactory.js`); the classifier attaches only `{issues}`, never the tool's declared `{reason, recovery}`. So a schema-level `.regex()`/`.refine()` failure can *never* surface a tool's `invalid_park_code`/`invalid_state_code`/`invalid_date` recovery text — a `.refine()` with a custom message lands in the same dead branch. The fix loosens the `parkCode`/`stateCode` schemas to `z.string().optional()` and validates token format in each handler (mirroring the existing `dateEnd < dateStart` check), and adds a synchronous `Date.UTC` round-trip calendar check for `dateStart`/`dateEnd` in `nps_find_events` (the `YYYY-MM-DD` regex still guards shape; `"2026-02-31"` passes shape but fails the calendar check before the upstream 400). `nps_find_events` also gains the `invalid_state_code` reason it was missing despite carrying an identical `stateCode` field. Loosening a format constraint plus a handler check is strictly permissive and backward-compatible — patch-level.
+17. **Code format and date validity are validated in the handler, never with a schema `.regex()`/`.refine()`, so every malformed code or date gets its declared reason and recovery (#3, #8, #12).** Arguments are parsed before the handler runs, so a schema rejection reaches the client as `-32602` with the framework-owned reason `invalid_arguments` and a hint synthesized from the Zod issue. For a `.regex()` that hint only restates the pattern (`Invalid string: must match pattern /^[a-z]{4}$/`), never the tool's "look it up with nps_find_parks" guidance, and no tool-declared reason can ride a rejection the handler never saw. A custom `.regex()` message would put better text in that hint but keep `-32602`/`invalid_arguments`, so the six tools would answer the same bad `parkCode` with two codes and `nps_find_events` would split one date field between `invalid_arguments` (shape) and `invalid_date` (calendar); rejected. So on all six tools the `parkCode`/`stateCode` fields and `nps_find_events`' `dateStart`/`dateEnd` are plain `z.string()` with the format stated in `.describe()`, and each handler throws `ctx.fail(reason, message, ctx.recoveryFor(reason))` before any upstream call: `invalid_park_code` / `invalid_state_code` (`-32007`) on every tool that takes the field, and `invalid_date` for a non-`YYYY-MM-DD` value, then for an impossible calendar date (`2026-02-31`, via a `Date.UTC` round trip, before NPS would 400), then for `dateEnd` < `dateStart`. `nps_get_park` checks each array element and names only the malformed codes; its `.min(1)/.max(10)` stay on the schema. `nps_get_activities`' recovery asks for one code, since `/thingstodo` takes a single value. An empty string from a form client counts as omitted, so `nps_get_activities` answers `{ parkCode: "" }` with `missing_filter`. Dropping the pattern loosens the advertised `inputSchema` and moves those rejections from `-32602` to `-32007`.
+
+18. **Catalog prose states the caller-facing contract; mechanics stay in source and this doc (#17).** Tool descriptions, `.describe()` strings, and error `when` text all reach `tools/list`, so they say what a caller can request, what a result means, and any material caveat (exact matches lead, filters apply before paging, totals cover the matched set, `null` means NPS published nothing) — never how the server produces it (local filtering, upstream quirks, HTML stripping) or coaching aimed at the model. That rationale lives in JSDoc, code comments, and this Decisions Log, and the weather-server pointer lives once, in the server `instructions`. `tests/tools/tool-contract.test.ts` fails when an advertised string carries the mechanics phrasing this rule removed. Runtime text the caller reads — notices and `format()` lines — follows the same rule ("NPS reported: …", not "Upstream reported: …").
 
 ---
 
@@ -858,7 +867,7 @@ All changes were verified against live API responses (a valid key confirmed work
 
 #### Data shape bugs (would produce wrong or empty output)
 
-14. **`amenities.potableWater`, `showers`, `toilets` are arrays**, not simple strings (e.g. `["Yes - seasonal", "None"]`) — normalization must check if any element starts with `"Yes"`, not just compare a string. Corrected with description.
+14. **`amenities.potableWater`, `showers`, `toilets` are arrays**, not simple strings (e.g. `["Flush Toilets - year round"]`, `["No Toilets"]`) — normalization classifies every element rather than comparing one string, and an empty value is `null`. The rule is under `nps_find_campgrounds` → Amenity normalization.
 15. **Alert `url` is empty string `""` when absent**, not `null` — service must normalize to `null`. Updated description.
 16. **Alert `lastIndexedDate` format is `"YYYY-MM-DD 00:00:00.0"`**, not ISO 8601 — corrected description; service should strip to `"YYYY-MM-DD"`.
 17. **Alert category enum was wrong** — `"Closure"` does not exist in live data; actual categories are `Danger`, `Caution`, `Information`, `Park Closure`. Removed `"Closure"` from the input enum and output description. Updated all references (decision #4, format note).

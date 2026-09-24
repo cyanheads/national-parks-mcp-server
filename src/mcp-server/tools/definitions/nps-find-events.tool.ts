@@ -13,7 +13,7 @@ import { getNpsService } from '@/services/nps/nps-service.js';
 export const npsFindEvents = tool('nps_find_events', {
   title: 'national-parks-mcp-server: find events',
   description:
-    'Scheduled events at a park within a date range — ranger programs, festivals, tours, interpretive events — answering "what\'s happening at Yellowstone this weekend?" with title, dates and times, location, category, fee, and registration links. Get park codes from nps_find_parks. Paginates by page number, not offset. The events feed is sparser and less consistent than alerts or campgrounds; many parks list few or no events, and an empty result is not an error.',
+    'Scheduled events at a park within a date range — ranger programs, festivals, tours, interpretive events — answering "what\'s happening at Yellowstone this weekend?" with title, dates and times, location, category, fee, and registration links. Get park codes from nps_find_parks. Paginates by page number, not offset. Many parks list few or no events; an empty result is not an error.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z
@@ -30,14 +30,12 @@ export const npsFindEvents = tool('nps_find_events', {
       ),
     dateStart: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
       .optional()
       .describe(
         'Start of the date window (YYYY-MM-DD). Combine with dateEnd to bound the search (e.g. a weekend). Omit for upcoming events from today.',
       ),
     dateEnd: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
       .optional()
       .describe('End of the date window (YYYY-MM-DD). Use with dateStart.'),
     query: z
@@ -73,7 +71,7 @@ export const npsFindEvents = tool('nps_find_events', {
               .string()
               .nullable()
               .describe('Park code the event belongs to, or null if absent.'),
-            description: z.string().describe('Event description (HTML stripped to plain text).'),
+            description: z.string().describe('Event description as plain text.'),
             location: z
               .string()
               .nullable()
@@ -93,12 +91,12 @@ export const npsFindEvents = tool('nps_find_events', {
             occurrenceDates: z
               .array(z.string())
               .describe(
-                'Occurrence dates (YYYY-MM-DD) that fall within the requested dateStart/dateEnd window. When no date window is requested, this lists every remaining occurrence from today through the series end. Empty when the window matches no occurrence. Trust this for "when does this actually happen?" — dateStart/dateEnd above are the record\'s anchor and can be stale for a long-running recurring series.',
+                'Dates (YYYY-MM-DD) the event actually occurs within the requested dateStart/dateEnd window; with no window, every remaining occurrence from today through the series end. Empty when the window matches no occurrence. For a recurring series, dateStart/dateEnd hold the series anchor instead.',
               ),
             isRecurring: z
               .boolean()
               .describe(
-                'True when this is a recurring series (multiple occurrence dates). Explains why dateStart/dateEnd may show a single frozen anchor date while occurrenceDates carries the real dates.',
+                'True when this is a recurring series (multiple occurrence dates); dateStart/dateEnd then hold the series anchor and occurrenceDates the actual dates.',
               ),
             times: z
               .array(
@@ -133,6 +131,12 @@ export const npsFindEvents = tool('nps_find_events', {
   }),
   enrichment: {
     totalCount: z.number().describe('Total events matching the filter before the page limit.'),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when more matching events follow this page; absent on the last page of the result.',
+      ),
     shown: z
       .number()
       .optional()
@@ -146,11 +150,11 @@ export const npsFindEvents = tool('nps_find_events', {
       .string()
       .optional()
       .describe(
-        'Guidance when no events matched, or a warning when the upstream envelope reported errors.',
+        'Guidance on the result set: how to widen a search that matched nothing, the pageNumber for the next page when more events matched, the way back when pageNumber ran past the end, and a warning when NPS reports errors for the request.',
       ),
   },
   enrichmentTrailer: {
-    totalCount: { label: 'Total Events' },
+    truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Page Size' },
     appliedFilters: { label: 'Filters' },
@@ -179,9 +183,10 @@ export const npsFindEvents = tool('nps_find_events', {
   ],
 
   async handler(input, ctx) {
-    // Code and calendar validation runs HERE, not at the Zod schema edge: a
-    // schema-level regex/refine failure throws a raw ZodError before ctx.fail
-    // exists, so the declared recovery hints would never reach the client (#3, #8).
+    // Code and date validation runs HERE, not as a schema .regex()/.refine(): a
+    // schema rejection reaches the client as -32602 invalid_arguments with only
+    // the pattern as its hint, so the declared reasons and recoveries never
+    // would (#3, #8, #12).
     if (input.parkCode && !input.parkCode.split(',').every((t) => /^[a-z]{4}$/.test(t))) {
       throw ctx.fail(
         'invalid_park_code',
@@ -196,21 +201,26 @@ export const npsFindEvents = tool('nps_find_events', {
         { ...ctx.recoveryFor('invalid_state_code') },
       );
     }
-    // "2026-02-31" passes the YYYY-MM-DD shape regex but isn't a real date — catch
-    // it before NPS 400s (#8). The schema regex guards shape; this guards the calendar.
-    if (input.dateStart && !isRealCalendarDate(input.dateStart)) {
-      throw ctx.fail(
-        'invalid_date',
-        `dateStart "${input.dateStart}" is not a real calendar date.`,
-        { ...ctx.recoveryFor('invalid_date') },
-      );
+    // Shape first, then the calendar: "2026-02-31" is YYYY-MM-DD but not a real
+    // date, and would otherwise reach NPS as a 400 (#8). An empty string from a
+    // form client reads as omitted.
+    for (const [field, value] of [
+      ['dateStart', input.dateStart],
+      ['dateEnd', input.dateEnd],
+    ] as const) {
+      if (!value) continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw ctx.fail('invalid_date', `${field} "${value}" is not in YYYY-MM-DD format.`, {
+          ...ctx.recoveryFor('invalid_date'),
+        });
+      }
+      if (!isRealCalendarDate(value)) {
+        throw ctx.fail('invalid_date', `${field} "${value}" is not a real calendar date.`, {
+          ...ctx.recoveryFor('invalid_date'),
+        });
+      }
     }
-    if (input.dateEnd && !isRealCalendarDate(input.dateEnd)) {
-      throw ctx.fail('invalid_date', `dateEnd "${input.dateEnd}" is not a real calendar date.`, {
-        ...ctx.recoveryFor('invalid_date'),
-      });
-    }
-    // Cross-field date validation the regex can't express.
+    // Cross-field date validation.
     if (input.dateStart && input.dateEnd && input.dateEnd < input.dateStart) {
       throw ctx.fail(
         'invalid_date',
@@ -236,7 +246,7 @@ export const npsFindEvents = tool('nps_find_events', {
 
     const window =
       input.dateStart || input.dateEnd
-        ? `${input.dateStart ?? 'today'} to ${input.dateEnd ?? 'open'}`
+        ? `${input.dateStart || 'today'} to ${input.dateEnd || 'open'}`
         : 'upcoming';
     const filters = [
       input.parkCode ? `parkCode=${input.parkCode}` : null,
@@ -255,18 +265,17 @@ export const npsFindEvents = tool('nps_find_events', {
     });
 
     // The events envelope can report errors[] even on a 200 — warn, don't throw.
-    const warning =
-      result.errors.length > 0 ? ` Upstream reported: ${result.errors.join('; ')}.` : '';
+    const warning = result.errors.length > 0 ? ` NPS reported: ${result.errors.join('; ')}.` : '';
     const notices: string[] = [];
     if (result.data.length === 0) {
       // An empty page past the end is NOT an absence of events.
       notices.push(
         result.total > 0
           ? `No events on this page: pageNumber=${input.pageNumber} is past the end of ${result.total} matching event(s). Re-request with pageNumber=1 to see them.${warning}`
-          : `No events found for ${filters.join(', ')}. Widen the date range, drop the query filter, or check the park calendar via the park page. The events feed is sparser than alerts/campgrounds.${warning}`,
+          : `No events found for ${filters.join(', ')}. Widen the date range, drop the query filter, or check the park calendar via the park page. Many parks list few or no events.${warning}`,
       );
     } else if (warning) {
-      notices.push(`Events returned, but the upstream feed reported issues.${warning}`);
+      notices.push(`Events returned, but NPS reported errors for this request.${warning}`);
     }
 
     // Every notice source composes into ONE string: ctx.enrich.truncated()
@@ -337,7 +346,8 @@ function whenLine(
  * True when a YYYY-MM-DD string is a real calendar date. JS `Date` silently rolls
  * impossible components forward (Feb 31 → Mar 3), so build the date in UTC and
  * confirm every component survives the round-trip — the standard, synchronous,
- * dependency-free validity check. The schema regex has already guaranteed shape.
+ * dependency-free validity check. The caller has already checked the YYYY-MM-DD
+ * shape.
  */
 function isRealCalendarDate(value: string): boolean {
   const parts = value.split('-');

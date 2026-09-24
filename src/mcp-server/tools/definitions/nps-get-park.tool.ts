@@ -12,15 +12,15 @@ import { getNpsService } from '@/services/nps/nps-service.js';
 export const npsGetPark = tool('nps_get_park', {
   title: 'national-parks-mcp-server: get park detail',
   description:
-    'Full trip-planning detail for one or more parks by parkCode: description, activities and topics, entrance fees and passes, operating hours by area/season, contacts, directions, a free-text weather overview, representative images, and the NPS page for everything else. Get codes from nps_find_parks. Up to ten codes are fetched in a single request. Use the fields parameter to trim the payload when you only need certain sections.',
+    'Full trip-planning detail for one or more parks by parkCode: description, activities and topics, entrance fees and passes, operating hours by area/season, contacts, directions, a free-text weather overview, representative images, and the NPS page for everything else. Get codes from nps_find_parks. Accepts up to ten codes per call. Use the fields parameter to return only the sections you need.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z
-      .array(z.string().regex(/^[a-z]{4}$/))
+      .array(z.string())
       .min(1)
       .max(10)
       .describe(
-        'One to ten park codes (each a 4-letter lowercase code like "yose", "grca", "zion"). Get codes from nps_find_parks. Multiple codes are fetched in a single request.',
+        'One to ten park codes per call, each a 4-letter lowercase code (e.g. "yose", "grca", "zion"). Get codes from nps_find_parks.',
       ),
     fields: z
       .array(z.enum(['activities', 'topics', 'fees', 'hours', 'contacts', 'directions', 'images']))
@@ -50,13 +50,22 @@ export const npsGetPark = tool('nps_get_park', {
               .string()
               .nullable()
               .describe(
-                'NPS free-text weather/seasonal overview for the park, or null. For an actual forecast, feed the coordinates to nws-weather or open-meteo.',
+                'NPS free-text weather/seasonal overview for the park, or null. General seasonal guidance, not a forecast.',
               ),
             directionsInfo: z
               .string()
+              .optional()
               .nullable()
-              .describe('Free-text driving/access directions, or null.'),
-            directionsUrl: z.string().nullable().describe('NPS directions page URL, or null.'),
+              .describe(
+                'Free-text driving/access directions, or null when NPS publishes none (included unless fields excludes "directions").',
+              ),
+            directionsUrl: z
+              .string()
+              .optional()
+              .nullable()
+              .describe(
+                'NPS directions page URL, or null when NPS publishes none (included unless fields excludes "directions").',
+              ),
             url: z.string().describe("Park's official NPS.gov page."),
             activities: z
               .array(z.string())
@@ -168,7 +177,7 @@ export const npsGetPark = tool('nps_get_park', {
               .boolean()
               .optional()
               .describe(
-                'True when the park has more images upstream than the 5 returned here — open the park url for the full set. Present only when the images section is included.',
+                'True when the park has more than the 5 images returned here; the park url has the full set. Present only when the images section is included.',
               ),
           })
           .describe('One park with its trip-planning detail.'),
@@ -177,12 +186,12 @@ export const npsGetPark = tool('nps_get_park', {
   }),
   enrichment: {
     requestedCount: z.number().describe('Number of park codes requested.'),
-    returnedCount: z.number().describe('Number of parks the API returned.'),
+    returnedCount: z.number().describe('Number of requested parks found.'),
     missingCodes: z
       .array(z.string())
       .optional()
       .describe(
-        'Requested park codes the API returned no record for — likely invalid/misspelled codes. Populated only when some codes did not resolve.',
+        'Requested park codes that matched no NPS site — likely misspelled. Populated only when some codes did not resolve.',
       ),
     notice: z
       .string()
@@ -196,15 +205,34 @@ export const npsGetPark = tool('nps_get_park', {
   },
   errors: [
     {
+      reason: 'invalid_park_code',
+      code: JsonRpcErrorCode.ValidationError,
+      when: "A parkCode element isn't 4 lowercase letters.",
+      recovery:
+        'Provide each park code as a 4-letter lowercase code (e.g. "yose"). Look them up with nps_find_parks.',
+    },
+    {
       reason: 'no_parks_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'The API returned zero records for every requested code.',
+      when: 'None of the requested codes matched an NPS site.',
       recovery:
         'None of the requested park codes resolved. Use nps_find_parks to look up the correct 4-letter code (e.g. "grca" for Grand Canyon).',
     },
   ],
 
   async handler(input, ctx) {
+    // Code-format validation runs HERE, not as a schema .regex(): a schema
+    // rejection reaches the client as -32602 invalid_arguments with only the
+    // pattern as its hint, so the declared reason and recovery never would (#12).
+    const malformed = input.parkCode.filter((c) => !/^[a-z]{4}$/.test(c));
+    if (malformed.length > 0) {
+      throw ctx.fail(
+        'invalid_park_code',
+        `parkCode ${malformed.map((c) => `"${c}"`).join(', ')} must be 4-letter lowercase code(s).`,
+        { ...ctx.recoveryFor('invalid_park_code') },
+      );
+    }
+
     const parks = await getNpsService().getParks(input.parkCode, input.fields, ctx);
 
     if (parks.length === 0) {
@@ -256,7 +284,7 @@ export const npsGetPark = tool('nps_get_park', {
         }
         if (p.imagesTruncated) {
           lines.push(
-            '_The park has more images upstream than the representative set shown here — see the park page._',
+            `_This park has more images than the ${p.images.length} shown here — see the park page._`,
           );
         }
       }

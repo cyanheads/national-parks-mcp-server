@@ -59,6 +59,8 @@ describe('NpsService', () => {
     service = new NpsService(CONFIG);
     ctx = createMockContext();
     mockFetch.mockReset();
+    // Strict by default: a call no test layered a fake for fails loudly.
+    mockFetch.mockRejectedValue(new Error('unmocked fetch'));
   });
 
   describe('findParks', () => {
@@ -212,6 +214,9 @@ describe('NpsService', () => {
               designation: 'National Park',
               states: 'HI',
               description: 'x',
+              weatherInfo: 'Warm and humid.',
+              directionsInfo: 'Take Highway 11 south from Hilo.',
+              directionsUrl: 'https://www.nps.gov/havo/planyourvisit/directions.htm',
               url: 'https://www.nps.gov/havo/',
               activities: [{ id: '1', name: 'Hiking' }],
               entranceFees: [{ cost: '30.00', title: 'Vehicle', description: '7 days' }],
@@ -227,6 +232,112 @@ describe('NpsService', () => {
       // images excluded → neither the list nor its truncation flag is populated.
       expect(park.images).toBeUndefined();
       expect(park.imagesTruncated).toBeUndefined();
+      // directions excluded → both keys absent, not null ("not requested" ≠ "NPS has none").
+      expect(Object.keys(park)).not.toContain('directionsInfo');
+      expect(Object.keys(park)).not.toContain('directionsUrl');
+      // weatherOverview has no fields toggle — it stays in the core.
+      expect(park.weatherOverview).toBe('Warm and humid.');
+    });
+
+    it.each([
+      { label: 'fields omitted', fields: undefined },
+      { label: 'fields including directions', fields: ['directions' as const] },
+    ])(
+      'returns the directions pair with $label; an empty directionsInfo is null while its URL passes through',
+      async ({ fields }) => {
+        mockFetch.mockResolvedValueOnce(
+          okResponse({
+            data: [
+              {
+                parkCode: 'cach',
+                fullName: 'Canyon de Chelly National Monument',
+                url: 'https://www.nps.gov/cach/',
+                directionsInfo: '',
+                directionsUrl: 'http://www.nps.gov/cach/planyourvisit/directions.htm',
+              },
+            ],
+          }),
+        );
+
+        const park = (await service.getParks(['cach'], fields, ctx))[0]!;
+        expect(Object.keys(park)).toContain('directionsInfo');
+        expect(park.directionsInfo).toBeNull();
+        expect(park.directionsUrl).toBe('http://www.nps.gov/cach/planyourvisit/directions.htm');
+      },
+    );
+
+    it('strips markup from weatherOverview, directionsInfo, and fee/pass descriptions', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            {
+              parkCode: 'vafo',
+              fullName: 'Valley Forge National Historical Park',
+              description: 'Encampment of the <em>Continental Army</em>.',
+              url: 'https://www.nps.gov/vafo/',
+              weatherInfo:
+                'Summers are hot. Find more detailed weather information on the <a href=https://example.test/w>Weather page.</a>',
+              directionsInfo:
+                'From I-76, see the <a href="https://example.test/d">driving directions</a> page.',
+              directionsUrl: 'https://www.nps.gov/vafo/planyourvisit/directions.htm',
+              entranceFees: [
+                {
+                  cost: '0.00',
+                  title: 'Entrance - Education/Academic Groups',
+                  description:
+                    'Waivers are available. See additional <a href="https://example.test/e">Education Fee Waiver</a> page.',
+                },
+              ],
+              entrancePasses: [
+                {
+                  cost: '80.00',
+                  title: 'Annual Pass',
+                  description: 'Valid for <strong>one year</strong> from purchase.',
+                },
+              ],
+            },
+          ],
+        }),
+      );
+
+      const park = (await service.getParks(['vafo'], undefined, ctx))[0]!;
+      expect(park.weatherOverview).toBe(
+        'Summers are hot. Find more detailed weather information on the Weather page.',
+      );
+      expect(park.directionsInfo).toBe('From I-76, see the driving directions page.');
+      expect(park.entranceFees![0]!.description).toBe(
+        'Waivers are available. See additional Education Fee Waiver page.',
+      );
+      expect(park.entrancePasses![0]!.description).toBe('Valid for one year from purchase.');
+      // Out of scope: fee cost/title and the park description are passed through untouched.
+      expect(park.entranceFees![0]!.cost).toBe('0.00');
+      expect(park.entranceFees![0]!.title).toBe('Entrance - Education/Academic Groups');
+      expect(park.description).toBe('Encampment of the <em>Continental Army</em>.');
+    });
+
+    it('returns markup-free text unchanged — line breaks and bare angle brackets survive', async () => {
+      const cleanFee = 'Per vehicle, valid 7 days.\n\nCommercial tours pay per person.';
+      const cuisWeather =
+        "Summer highs are in the 80's (>26 C) and winter lows in the 60's (<20 C), with rain possible.";
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            {
+              parkCode: 'cuis',
+              fullName: 'Cumberland Island National Seashore',
+              url: 'https://www.nps.gov/cuis/',
+              weatherInfo: `  ${cuisWeather}  `,
+              entranceFees: [
+                { cost: '10.00', title: 'Entrance - Per Person', description: cleanFee },
+              ],
+            },
+          ],
+        }),
+      );
+
+      const park = (await service.getParks(['cuis'], ['fees'], ctx))[0]!;
+      expect(park.weatherOverview).toBe(cuisWeather);
+      expect(park.entranceFees![0]!.description).toBe(cleanFee);
     });
   });
 
@@ -407,7 +518,143 @@ describe('NpsService', () => {
       expect(cg.fee).toBeNull();
       expect(cg.accessibility).toBeNull();
       expect(cg.url).toBeNull();
-      expect(cg.amenities.rvAllowed).toBe(false);
+      // No amenities object and no accessibility.rvAllowed → every amenity unknown.
+      expect(cg.amenities).toEqual({
+        potableWater: null,
+        showers: null,
+        dumpStation: null,
+        rvAllowed: null,
+        toilets: null,
+        trashCollection: null,
+      });
+    });
+
+    /** One campground whose `amenities` block is exactly `amenities`. */
+    async function amenitiesFor(
+      amenities: Record<string, unknown>,
+      accessibility: Record<string, unknown> = { rvAllowed: '0' },
+    ) {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          data: [{ id: 'cx', name: 'Fixture', parkCode: 'zion', amenities, accessibility }],
+        }),
+      );
+      return (await service.findCampgrounds({ parkCode: 'zion', limit: 15 }, ctx)).data[0]!
+        .amenities;
+    }
+
+    it('reads "Water, but not potable" (split at its comma) as no potable water', async () => {
+      const a = await amenitiesFor({ potableWater: ['Water', ' but not potable'] });
+      expect(a.potableWater).toBe(false);
+    });
+
+    it('negates only the element a " but not potable" fragment was split from', async () => {
+      const a = await amenitiesFor({
+        potableWater: ['Yes - seasonal', 'Water', ' but not potable'],
+      });
+      expect(a.potableWater).toBe(true);
+    });
+
+    it('keeps a real positive true beside a self-contained "not potable" element', async () => {
+      const a = await amenitiesFor({ potableWater: ['Yes - seasonal', 'Water, but not potable'] });
+      expect(a.potableWater).toBe(true);
+    });
+
+    it.each([['Water, but not potable'], ['Not potable'], ['Non-potable water'], ['Nonpotable']])(
+      'reads a self-contained %j as no potable water',
+      async (value) => {
+        const a = await amenitiesFor({ potableWater: [value] });
+        expect(a.potableWater).toBe(false);
+      },
+    );
+
+    it('reads "No Toilets" as no toilets', async () => {
+      const a = await amenitiesFor({ toilets: ['No Toilets'] });
+      expect(a.toilets).toBe(false);
+    });
+
+    it('keeps a field true when a real positive sits beside a negative', async () => {
+      const a = await amenitiesFor({
+        toilets: ['Vault Toilets - year round', 'No Toilets'],
+        showers: ['Coin-Operated - Seasonal', 'None'],
+      });
+      expect(a.toilets).toBe(true);
+      expect(a.showers).toBe(true);
+    });
+
+    it.each([
+      ['Yes - seasonal', true],
+      ['Yes - year round', true],
+      ['Vault Toilets - seasonal', true],
+      ['Hot - Year Round', true],
+      ['Cold- Seasonal', true],
+      ['No water', false],
+      ['None', false],
+      ['No', false],
+    ])(
+      'classifies a populated %j as %s on both array and string fields',
+      async (value, expected) => {
+        const a = await amenitiesFor({
+          potableWater: [value],
+          showers: [value],
+          toilets: [value],
+          dumpStation: value,
+          trashRecyclingCollection: value,
+        });
+        expect(a).toMatchObject({
+          potableWater: expected,
+          showers: expected,
+          toilets: expected,
+          dumpStation: expected,
+          trashCollection: expected,
+        });
+      },
+    );
+
+    it('maps each empty upstream amenity value to null without touching the populated ones', async () => {
+      const a = await amenitiesFor(
+        {
+          potableWater: [],
+          showers: ['', '  '],
+          toilets: ['Flush Toilets - year round'],
+          dumpStation: '',
+          trashRecyclingCollection: 'No',
+        },
+        { rvAllowed: '1' },
+      );
+      expect(a).toEqual({
+        potableWater: null,
+        showers: null,
+        toilets: true,
+        dumpStation: null,
+        trashCollection: false,
+        rvAllowed: true,
+      });
+    });
+
+    it('returns null for every empty amenity on an all-empty record (American Memorial Park shape)', async () => {
+      const a = await amenitiesFor({
+        potableWater: [],
+        toilets: [],
+        showers: [],
+        dumpStation: '',
+        trashRecyclingCollection: '',
+      });
+      expect(a).toEqual({
+        potableWater: null,
+        showers: null,
+        toilets: null,
+        dumpStation: null,
+        trashCollection: null,
+        // accessibility.rvAllowed is populated ("0") on the record, so it stays a real false.
+        rvAllowed: false,
+      });
+    });
+
+    it('maps an empty accessibility.rvAllowed to null', async () => {
+      const a = await amenitiesFor({ potableWater: ['No water'] }, { rvAllowed: '' });
+      expect(a.rvAllowed).toBeNull();
     });
   });
 
@@ -655,6 +902,49 @@ describe('NpsService', () => {
       expect(result.data[0]!.occurrenceDates).toEqual(['2026-07-18']);
     });
 
+    it('keeps prose around bare < and > while still stripping real tags', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          errors: [],
+          data: [
+            {
+              id: 'e5',
+              title: 'Stats Talk',
+              sitecode: 'yell',
+              description:
+                '<p>Significant at p < 0.05 and x > 3.</p><p>Ages <12 ride free; groups >20 book ahead.</p><!-- internal note --><br/>Bring water.',
+            },
+          ],
+        }),
+      );
+
+      const result = await service.findEvents(
+        { parkCode: 'yell', pageSize: 15, pageNumber: 1 },
+        ctx,
+      );
+      expect(result.data[0]!.description).toBe(
+        'Significant at p < 0.05 and x > 3. Ages <12 ride free; groups >20 book ahead. Bring water.',
+      );
+    });
+
+    it('removes a tag reassembled from the pieces left by an inner tag', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          total: '1',
+          errors: [],
+          data: [{ id: 'e6', title: 'x', description: 'Go <scr<b>ipt>here</scr<b>ipt> now.' }],
+        }),
+      );
+
+      const result = await service.findEvents(
+        { parkCode: 'yell', pageSize: 15, pageNumber: 1 },
+        ctx,
+      );
+      expect(result.data[0]!.description).not.toMatch(/<\/?[A-Za-z]/);
+      expect(result.data[0]!.description).toBe('Go here now.');
+    });
+
     it('surfaces a non-empty envelope errors[] in the result', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({
@@ -672,6 +962,51 @@ describe('NpsService', () => {
       );
       expect(result.data).toEqual([]);
       expect(result.errors).toEqual(['Date range too large']);
+    });
+  });
+
+  describe('markup stripping cost', () => {
+    /** Best-of-5 wall time (ms) for one normalization of `text` through `run`. */
+    async function bestOf(run: () => Promise<unknown>): Promise<number> {
+      let best = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now();
+        await run();
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best;
+    }
+
+    it.each([
+      { label: "repeated '<' with no closing >", make: (n: number) => '<'.repeat(n) },
+      {
+        label: "repeated '<a ' with no closing >",
+        make: (n: number) => '<a '.repeat(Math.ceil(n / 3)).slice(0, n),
+      },
+      {
+        // Each removed inner tag joins the pieces around it into a new tag.
+        label: "nested '<a<a…>>' tags",
+        make: (n: number) => '<a'.repeat(Math.floor(n / 3)) + '>'.repeat(Math.floor(n / 3)),
+      },
+    ])('stays linear on $label', async ({ make }) => {
+      const timings: Record<number, number> = {};
+      for (const size of [5_000, 20_000, 80_000]) {
+        const text = make(size);
+        const eventBody = okResponse({
+          total: '1',
+          errors: [],
+          data: [{ id: 'p', description: text }],
+        });
+        const parkBody = okResponse({ data: [{ parkCode: 'perf', weatherInfo: text }] });
+        timings[size] = await bestOf(async () => {
+          mockFetch.mockResolvedValueOnce(eventBody).mockResolvedValueOnce(parkBody);
+          await service.findEvents({ pageSize: 1, pageNumber: 1 }, ctx);
+          await service.getParks(['perf'], ['hours'], ctx);
+        });
+      }
+      // Linear growth is ~16x from 5k to 80k; quadratic backtracking is ~256x.
+      expect(timings[80_000]! / timings[5_000]!).toBeLessThan(64);
+      expect(timings[80_000]!).toBeLessThan(100);
     });
   });
 

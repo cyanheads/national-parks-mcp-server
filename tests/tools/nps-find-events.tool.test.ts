@@ -1,11 +1,12 @@
 /**
- * @fileoverview Tests for the nps_find_events tool — the date-range guard, the
+ * @fileoverview Tests for the nps_find_events tool — the date guards, the
  * headline path, the upstream errors[] warning fold, the empty-result notice,
- * and format().
+ * truncation on both client surfaces, and format().
  * @module tests/tools/nps-find-events.tool.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { npsFindEvents } from '@/mcp-server/tools/definitions/nps-find-events.tool.js';
 import type { NpsEvent, NpsEventsResult } from '@/services/nps/types.js';
@@ -16,6 +17,14 @@ vi.mock('@/services/nps/nps-service.js', () => ({
 }));
 
 import { getNpsService } from '@/services/nps/nps-service.js';
+
+/** The `structuredContent.error` envelope of a failed call. */
+type ContractError = { code: number; message: string; data?: { reason?: string } };
+
+/** Text of every content block, joined — the surface content[]-reading clients see. */
+function contentText(result: { content: { type: string; text?: string }[] }): string {
+  return result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+}
 
 function makeEvent(overrides?: Partial<NpsEvent>): NpsEvent {
   return {
@@ -95,7 +104,20 @@ describe('nps_find_events', () => {
     const result = await npsFindEvents.handler(input, ctx);
 
     expect(result.events).toEqual([]);
-    expect(getEnrichment(ctx).notice).toMatch(/sparser than alerts/);
+    expect(getEnrichment(ctx).notice).toMatch(/Many parks list few or no events/);
+  });
+
+  it.each([
+    ['an empty result', makeResult({ total: 0, data: [], errors: ['Date range too large'] })],
+    ['a non-empty result', makeResult({ errors: ['Date range too large'] })],
+  ])('words the NPS errors[] warning on %s as a caller-facing fact', async (_, upstream) => {
+    findEvents.mockResolvedValueOnce(upstream);
+    const result = await runToolContract(npsFindEvents, { parkCode: 'yell' });
+
+    const notice = (result.structuredContent as { notice?: string }).notice ?? '';
+    expect(notice).toContain('NPS reported: Date range too large.');
+    expect(notice).not.toMatch(/upstream|sparser|feed/i);
+    expect(contentText(result as never)).toContain('NPS reported: Date range too large.');
   });
 
   it('handles a sparse event (null dates, null parkCode, no times)', async () => {
@@ -233,5 +255,141 @@ describe('nps_find_events', () => {
     expect(text).toMatch(/Recurring event/);
     expect(text).toContain('2026-08-01');
     expect(text).toContain('2026-08-08');
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * #12 — a date in the wrong shape gets invalid_date and its declared
+   * recovery, the same answer as an impossible calendar date, instead of the
+   * schema's -32602 invalid_arguments. Asserted through runToolContract, which
+   * runs the same argument parse the production handler factory does.
+   * ----------------------------------------------------------------------- */
+
+  describe('date validation on the client surfaces', () => {
+    it.each([
+      ['dateStart', { parkCode: 'yell', dateStart: '08/01/2026' }, '08/01/2026'],
+      [
+        'dateEnd',
+        { parkCode: 'yell', dateStart: '2026-08-01', dateEnd: '2026/08/03' },
+        '2026/08/03',
+      ],
+    ])('rejects a non-YYYY-MM-DD %s as invalid_date', async (field, args, value) => {
+      const result = await runToolContract(npsFindEvents, args);
+
+      expect(result.isError).toBe(true);
+      const error = (result.structuredContent as { error: ContractError }).error;
+      expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
+      expect(error.data?.reason).toBe('invalid_date');
+      expect(error.message).toBe(`${field} "${value}" is not in YYYY-MM-DD format.`);
+      expect(contentText(result as never)).toMatch(
+        /^Recovery: Provide dates as real YYYY-MM-DD calendar dates/m,
+      );
+      expect(findEvents).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an impossible calendar date', { parkCode: 'yell', dateStart: '2026-02-31' }],
+      [
+        'dateEnd before dateStart',
+        { parkCode: 'yell', dateStart: '2026-07-06', dateEnd: '2026-07-04' },
+      ],
+    ])('still rejects %s as invalid_date', async (_, args) => {
+      const result = await runToolContract(npsFindEvents, args);
+
+      const error = (result.structuredContent as { error: ContractError }).error;
+      expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
+      expect(error.data?.reason).toBe('invalid_date');
+      expect(contentText(result as never)).toMatch(/^Recovery: /m);
+      expect(findEvents).not.toHaveBeenCalled();
+    });
+
+    it('treats an empty-string dateStart from a form client as omitted', async () => {
+      findEvents.mockResolvedValueOnce(makeResult());
+      const result = await runToolContract(npsFindEvents, {
+        parkCode: 'yell',
+        dateStart: '',
+        dateEnd: '2026-08-03',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect((result.structuredContent as { appliedFilters: string }).appliedFilters).toBe(
+        'parkCode=yell, dates=today to 2026-08-03',
+      );
+    });
+
+    it('accepts a valid date window (control)', async () => {
+      findEvents.mockResolvedValueOnce(makeResult());
+      const result = await runToolContract(npsFindEvents, {
+        parkCode: 'yell',
+        dateStart: '2026-08-01',
+        dateEnd: '2026-08-03',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(findEvents).toHaveBeenCalledWith(
+        expect.objectContaining({ dateStart: '2026-08-01', dateEnd: '2026-08-03' }),
+        expect.anything(),
+      );
+    });
+
+    it('advertises the date and code formats in prose, not as schema patterns', () => {
+      const schema = JSON.stringify(npsFindEvents.input.toJSONSchema());
+      expect(schema).not.toContain('"pattern"');
+      expect(schema).toContain('(YYYY-MM-DD)');
+    });
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * #9 — the truncated flag reaches both client surfaces. Asserted on the
+   * runToolContract result: getEnrichment() reads the raw store, which holds
+   * truncated: true even when the output parse strips it.
+   * ----------------------------------------------------------------------- */
+
+  describe('truncated flag on the client surfaces', () => {
+    it.each([
+      [1, 2],
+      [2, 3],
+    ])('sets truncated on page %i of 3 and names pageNumber=%i', async (pageNumber, next) => {
+      findEvents.mockResolvedValueOnce(makeResult({ total: 3, data: [makeEvent()] }));
+      const result = await runToolContract(npsFindEvents, {
+        parkCode: 'yell',
+        pageSize: 1,
+        pageNumber,
+      });
+
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.truncated).toBe(true);
+      expect(sc).toMatchObject({
+        totalCount: 3,
+        shown: 1,
+        cap: 1,
+        appliedFilters: 'parkCode=yell, dates=upcoming',
+        notice: expect.stringContaining(`pageNumber=${next}`),
+      });
+      const text = contentText(result as never);
+      expect(text).toContain('**Truncated:** true');
+      expect(text).toContain('**3 total**');
+      expect(text).toContain('**Shown:** 1');
+      expect(text).toContain('**Page Size:** 1');
+      expect(text).toContain('**Filters:** parkCode=yell, dates=upcoming');
+      expect(text).toContain(`Request the next page with pageNumber=${next}.`);
+    });
+
+    it.each([
+      ['the last page', { parkCode: 'yell', pageSize: 1, pageNumber: 3 }, 3],
+      ['a single complete page', { parkCode: 'yell', pageSize: 50 }, 1],
+    ])('omits truncated from both surfaces on %s — absent, never false', async (_, args, total) => {
+      findEvents.mockResolvedValueOnce(makeResult({ total, data: [makeEvent()] }));
+      const result = await runToolContract(npsFindEvents, args);
+
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect('truncated' in sc).toBe(false);
+      expect('shown' in sc).toBe(false);
+      expect('cap' in sc).toBe(false);
+      expect('notice' in sc).toBe(false);
+      expect(sc.totalCount).toBe(total);
+      const text = contentText(result as never);
+      expect(text).not.toMatch(/truncated/i);
+      expect(text).toContain(`**${total} total**`);
+    });
   });
 });

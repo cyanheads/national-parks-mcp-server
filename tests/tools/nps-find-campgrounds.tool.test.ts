@@ -4,8 +4,13 @@
  * @module tests/tools/nps-find-campgrounds.tool.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createFetchMock,
+  createMockContext,
+  getEnrichment,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { npsFindCampgrounds } from '@/mcp-server/tools/definitions/nps-find-campgrounds.tool.js';
 import type { NpsCampground } from '@/services/nps/types.js';
 
@@ -15,6 +20,11 @@ vi.mock('@/services/nps/nps-service.js', () => ({
 }));
 
 import { getNpsService } from '@/services/nps/nps-service.js';
+
+/** Text of every content block, joined — the surface content[]-reading clients see. */
+function contentText(result: { content: { type: string; text?: string }[] }): string {
+  return result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+}
 
 function makeCampground(overrides?: Partial<NpsCampground>): NpsCampground {
   return {
@@ -85,7 +95,7 @@ describe('nps_find_campgrounds', () => {
     expect(getEnrichment(ctx).cap).toBe(1);
   });
 
-  it('handles a sparse campground (null counts, all amenities false)', async () => {
+  it('handles a sparse campground (null counts, every amenity unknown)', async () => {
     findCampgrounds.mockResolvedValueOnce({
       total: 1,
       data: [
@@ -97,12 +107,12 @@ describe('nps_find_campgrounds', () => {
           accessibility: null,
           url: null,
           amenities: {
-            potableWater: false,
-            showers: false,
-            dumpStation: false,
-            rvAllowed: false,
-            toilets: false,
-            trashCollection: false,
+            potableWater: null,
+            showers: null,
+            dumpStation: null,
+            rvAllowed: null,
+            toilets: null,
+            trashCollection: null,
           },
         }),
       ],
@@ -110,7 +120,7 @@ describe('nps_find_campgrounds', () => {
     const input = npsFindCampgrounds.input.parse({ parkCode: 'zion' });
     const result = await npsFindCampgrounds.handler(input, ctx);
     expect(result.campgrounds[0]!.totalSites).toBeNull();
-    expect(result.campgrounds[0]!.amenities.rvAllowed).toBe(false);
+    expect(result.campgrounds[0]!.amenities.rvAllowed).toBeNull();
   });
 
   it('format() renders the id, site split, and RV-allowed state (incl. No)', () => {
@@ -123,6 +133,127 @@ describe('nps_find_campgrounds', () => {
     expect(text).toContain('c1');
     expect(text).toContain('176 reservable');
     expect(text).toMatch(/RV allowed: No/);
+  });
+
+  it('format() renders an unknown amenity as Unknown, never No', () => {
+    const blocks = npsFindCampgrounds.format!({
+      campgrounds: [
+        makeCampground({
+          amenities: {
+            potableWater: null,
+            showers: false,
+            dumpStation: true,
+            rvAllowed: null,
+            toilets: null,
+            trashCollection: null,
+          },
+        }),
+      ],
+    });
+    const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('');
+    expect(text).toContain(
+      'Potable water: Unknown · Showers: No · Dump station: Yes · RV allowed: Unknown · Toilets: Unknown · Trash collection: Unknown',
+    );
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * Amenity normalization end to end — the real NpsService behind a strict
+   * fetch fake, run through the tool's public contract (schema + format()).
+   * ----------------------------------------------------------------------- */
+
+  describe('through the real service', () => {
+    const http = createFetchMock();
+
+    beforeEach(async () => {
+      const { NpsService } = await vi.importActual<typeof import('@/services/nps/nps-service.js')>(
+        '@/services/nps/nps-service.js',
+      );
+      vi.mocked(getNpsService).mockReturnValue(
+        new NpsService({ apiKey: 'test-key', baseUrl: 'https://developer.nps.gov/api/v1' }),
+      );
+      http.install();
+    });
+
+    afterEach(() => {
+      http.reset();
+      http.restore();
+    });
+
+    function upstream(record: Record<string, unknown>) {
+      http.route({
+        match: /\/campgrounds\?/,
+        respond: Response.json({ total: '1', limit: '15', start: '0', data: [record] }),
+      });
+    }
+
+    it('reports every empty upstream amenity as null / Unknown on both surfaces', async () => {
+      upstream({
+        id: 'amme-cg',
+        name: 'American Memorial Park',
+        parkCode: 'amme',
+        amenities: {
+          potableWater: [],
+          toilets: [],
+          showers: [],
+          dumpStation: '',
+          trashRecyclingCollection: '',
+        },
+        accessibility: { rvAllowed: '0' },
+      });
+
+      const result = await runToolContract(npsFindCampgrounds, { parkCode: 'amme' });
+      expect(result.isError).toBeFalsy();
+      const cg = (result.structuredContent as { campgrounds: NpsCampground[] }).campgrounds[0]!;
+      expect(cg.amenities).toEqual({
+        potableWater: null,
+        showers: null,
+        dumpStation: null,
+        rvAllowed: false,
+        toilets: null,
+        trashCollection: null,
+      });
+      const text = contentText(result as never);
+      expect(text).toContain(
+        'Potable water: Unknown · Showers: Unknown · Dump station: Unknown · RV allowed: No · Toilets: Unknown · Trash collection: Unknown',
+      );
+    });
+
+    it('reports "Water, but not potable" and "No Toilets" as No on both surfaces', async () => {
+      upstream({
+        id: 'lavo-bc',
+        name: "Backcountry Camping in Lassen's Wilderness",
+        parkCode: 'lavo',
+        amenities: {
+          potableWater: ['Water', ' but not potable'],
+          toilets: ['No Toilets'],
+          showers: ['None'],
+          dumpStation: 'No',
+          trashRecyclingCollection: 'No',
+        },
+        accessibility: { rvAllowed: '0' },
+      });
+
+      const result = await runToolContract(npsFindCampgrounds, { parkCode: 'lavo' });
+      expect(result.isError).toBeFalsy();
+      const cg = (result.structuredContent as { campgrounds: NpsCampground[] }).campgrounds[0]!;
+      expect(cg.amenities.potableWater).toBe(false);
+      expect(cg.amenities.toilets).toBe(false);
+      const text = contentText(result as never);
+      expect(text).toContain('Potable water: No');
+      expect(text).toContain('Toilets: No');
+    });
+
+    it('advertises each amenity as boolean-or-null and says what null means', () => {
+      type Node = { properties?: Record<string, Node>; items?: Node };
+      const schema = npsFindCampgrounds.output.toJSONSchema() as Node;
+      const amenities =
+        schema.properties?.campgrounds?.items?.properties?.amenities?.properties ?? {};
+      expect(Object.keys(amenities)).toHaveLength(6);
+      for (const field of Object.values(amenities)) {
+        expect(JSON.stringify(field)).toContain('"null"');
+        expect(JSON.stringify(field)).toContain('null when NPS published no value');
+      }
+    });
   });
 
   /* ----------------------------------------------------------------------- *
@@ -149,5 +280,53 @@ describe('nps_find_campgrounds', () => {
       },
     });
     expect(findCampgrounds).not.toHaveBeenCalled();
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * #9 — the truncated flag reaches both client surfaces. Asserted on the
+   * runToolContract result: getEnrichment() reads the raw store, which holds
+   * truncated: true even when the output parse strips it.
+   * ----------------------------------------------------------------------- */
+
+  describe('truncated flag on the client surfaces', () => {
+    it('sets structuredContent.truncated and a Truncated trailer line on a capped page', async () => {
+      findCampgrounds.mockResolvedValueOnce({
+        total: 97,
+        data: [makeCampground({ id: 'c1' }), makeCampground({ id: 'c2' })],
+      });
+      const result = await runToolContract(npsFindCampgrounds, { stateCode: 'CA', limit: 2 });
+
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect(sc.truncated).toBe(true);
+      expect(sc).toMatchObject({
+        totalCount: 97,
+        shown: 2,
+        cap: 2,
+        appliedFilters: 'stateCode=CA',
+        notice: expect.stringContaining('start=2'),
+      });
+      const text = contentText(result as never);
+      expect(text).toContain('**Truncated:** true');
+      expect(text).toContain('**97 total**');
+      expect(text).toContain('**Shown:** 2');
+      expect(text).toContain('**Limit:** 2');
+      expect(text).toContain('**Filters:** stateCode=CA');
+      expect(text).toContain('Request the next page with start=2.');
+    });
+
+    it('omits truncated from both surfaces on a complete result — absent, never false', async () => {
+      findCampgrounds.mockResolvedValueOnce({ total: 1, data: [makeCampground()] });
+      const result = await runToolContract(npsFindCampgrounds, { parkCode: 'zion', limit: 50 });
+
+      const sc = result.structuredContent as Record<string, unknown>;
+      expect('truncated' in sc).toBe(false);
+      expect('shown' in sc).toBe(false);
+      expect('cap' in sc).toBe(false);
+      expect('notice' in sc).toBe(false);
+      expect(sc.totalCount).toBe(1);
+      const text = contentText(result as never);
+      expect(text).not.toMatch(/truncated/i);
+      expect(text).toContain('**1 total**');
+    });
   });
 });

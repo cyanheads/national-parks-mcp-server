@@ -59,7 +59,9 @@ export const npsFindParks = tool('nps_find_parks', {
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     query: z.string().optional().describe('Free-text search across park names and descriptions.'),
-    stateCode: z.string().regex(/^[A-Za-z]{2}(,[A-Za-z]{2})*$/).optional().describe('Two-letter state code(s).'),
+    // Code format lives in .describe() and the handler, never a schema .regex(): a
+    // schema rejection is -32602 invalid_arguments and never carries the declared recovery.
+    stateCode: z.string().optional().describe('Two-letter state code(s), comma-separated.'),
     limit: z.number().int().min(1).max(50).default(10).describe('Maximum parks to return (1–50).'),
   }),
   output: z.object({
@@ -68,14 +70,22 @@ export const npsFindParks = tool('nps_find_parks', {
       fullName: z.string().describe('Full official name.'),
     }).describe('A matching park.')).describe('Matching parks.'),
   }),
-  // Result-set context (counts, applied-filter echo, empty-result guidance) rides
-  // ctx.enrich — it reaches both client surfaces and stays out of the output schema.
+  // Result-set context (counts, applied-filter echo, truncation, empty-result guidance)
+  // rides ctx.enrich — it reaches both client surfaces and stays out of the output schema.
+  // Every key a ctx.enrich helper writes must be declared here; an undeclared one is stripped.
   enrichment: {
     totalCount: z.number().describe('Total parks matching before the limit was applied.'),
+    truncated: z.boolean().optional().describe('True when more parks matched than were returned.'),
+    shown: z.number().optional().describe('Parks returned (set when truncated).'),
+    cap: z.number().optional().describe('Limit applied (set when truncated).'),
     appliedFilters: z.string().describe('Echo of the filters as applied.'),
-    notice: z.string().optional().describe('Guidance when no parks matched.'),
+    notice: z.string().optional().describe('Guidance on the result set.'),
   },
-  enrichmentTrailer: { totalCount: { label: 'Total Matches' }, appliedFilters: { label: 'Filters' } },
+  // No totalCount label: ctx.enrich.total() tags the field, which renders as "**N total**".
+  enrichmentTrailer: {
+    truncated: { label: 'Truncated' }, shown: { label: 'Shown' },
+    cap: { label: 'Limit' }, appliedFilters: { label: 'Filters' },
+  },
   errors: [
     { reason: 'invalid_state_code', code: JsonRpcErrorCode.ValidationError,
       when: 'A stateCode token is not two letters.',
@@ -83,6 +93,10 @@ export const npsFindParks = tool('nps_find_parks', {
   ],
 
   async handler(input, ctx) {
+    if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
+      throw ctx.fail('invalid_state_code', `stateCode "${input.stateCode}" must be two-letter code(s).`,
+        { ...ctx.recoveryFor('invalid_state_code') });
+    }
     const result = await getNpsService().findParks(input, ctx);
     ctx.enrich({ appliedFilters: '…' });
     ctx.enrich.total(result.total);
