@@ -85,9 +85,9 @@ describe('argument rejection', () => {
       recoveryLine: false,
     },
     {
-      name: 'nps_find_parks limit sent as a string',
+      name: 'nps_find_parks limit sent as a boolean',
       tool: npsFindParks,
-      args: { query: 'yosemite', limit: '3' },
+      args: { query: 'yosemite', limit: true },
       field: 'limit',
       recoveryLine: true,
     },
