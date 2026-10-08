@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.2.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -46,62 +46,46 @@ US National Park Service trip planning over the NPS Data API. Resolve a park to 
 
 ### `nps_find_parks` <sub>tool</sub>
 
-- Free-text search across park names and descriptions (e.g. `"yosemite"`, `"civil war"`, `"redwood"`); results are re-ranked locally so an exact `parkCode` or name match leads, since NPS returns matches in alphabetical-by-code order with no relevance ranking
-- Filter by two-letter `stateCode` or a comma-separated list (e.g. `"CA"`, `"WY,MT,ID"`)
-- Optional `activity` filter — case-insensitive substring match applied locally (the API has no activity param) across every site matching `query`/`stateCode`, then paginated
-- Pagination via `limit` (1–50, default 10) and `start` offset; `totalCount` counts the whole matched set, with broadening guidance when nothing matches
-- Summary carries `parkCode`, designation, states, description, coordinates, headline activities, lowest entrance fee, and the NPS page
+- Free-text `query`, two-letter `stateCode` (or a comma-separated list such as `"WY,MT,ID"`), and an optional `activity` filter; `limit` 1–50 (default 10) with a `start` offset
+- Each park carries its `parkCode` plus designation, states, description, coordinates, headline activities, lowest entrance fee, and NPS page; exact `parkCode` or name matches rank first, and `totalCount` counts every match
 
 ---
 
 ### `nps_get_park` <sub>tool</sub>
 
-- Batch up to **10 codes in a single upstream call**
-- Always-present core: name, designation, states, description, coordinates, weather overview, NPS page
-- Optional `fields` selector (`activities`, `topics`, `fees`, `hours`, `contacts`, `directions`, `images`) trims the payload to the sections you need
-- Entrance fees and passes broken out by category; operating hours by area/season with per-weekday values; phone and email contacts; representative images (capped at 5, with `imagesTruncated` disclosing when the park has more upstream)
-- Unresolved codes surface as `missingCodes` enrichment with a correction hint; only a fully-empty result is an error
+- Up to **10** `parkCode`s per call; the optional `fields` selector (`activities`, `topics`, `fees`, `hours`, `contacts`, `directions`, `images`) trims the payload to the sections you need
+- Always returns name, designation, states, description, coordinates, weather overview, and NPS page; fees and passes by category, hours by area and season, contacts, and up to 5 images (`imagesTruncated` when the park has more)
+- Codes that match no site come back as `missingCodes`; the call fails (`no_parks_found`) only when none resolve
 
 ---
 
 ### `nps_get_alerts` <sub>tool</sub>
 
-- Filter by `parkCode`, `stateCode`, or free-text `query`; optional `category` (`Danger`, `Caution`, `Information`, `Park Closure`) applied locally (the API has no category param) across every matching alert, then paginated
-- Pagination via `limit` (1–50, default 20) and `start` offset; truncation guidance names the next `start`
-- Sorted most-recent-first, identically on both client surfaces (`structuredContent` and `content[]`)
-- `categoryBreakdown` enrichment counts returned alerts per category — severity-ordered — so severity is legible without scanning each one
-- An empty result is explicitly framed in the notice — good news (nothing closed or hazardous) when the park or state has no alerts, a reminder that other alerts may still be active when a `category` or `query` filter matched nothing, or a paging artifact when `start` ran past the end — never a bare error
-- `lastIndexedDate` is the recency signal — a stale date may mean the condition has changed
+- Filter by `parkCode`, `stateCode`, free-text `query`, and `category` (`Danger`, `Caution`, `Information`, `Park Closure`); `limit` 1–50 (default 20) with a `start` offset
+- Most-recent-first, each alert with its category, `lastIndexedDate` recency, and detail; `categoryBreakdown` counts the returned alerts by severity
+- The notice tells an all-clear (no alerts at that location) apart from a filter that matched nothing and a page past the end
 
 ---
 
 ### `nps_find_campgrounds` <sub>tool</sub>
 
-- Filter by `parkCode`, `stateCode`, or free-text `query`; `limit` (1–50, default 15) and `start` pagination
-- Amenities: potable water, showers, RV dump station, toilets, trash collection, RV access — normalized from NPS's mixed array/string amenity fields to yes, no, or unknown when NPS publishes no value
-- Reservable vs. first-come-first-served site counts, total sites, reservation guidance and booking URL (often recreation.gov)
-- Lowest fee, accessibility summary, coordinates, and the campground's NPS page
-- Some parks list lodging or backcountry permits instead of NPS-managed campgrounds; an empty result is not an error
+- Filter by `parkCode`, `stateCode`, or free-text `query`; `limit` 1–50 (default 15) with a `start` offset
+- Per campground: amenities (potable water, showers, dump station, toilets, trash collection, RV access) as yes, no, or unknown; reservable, first-come, and total site counts; reservation guidance and booking URL; lowest fee, accessibility, coordinates, and NPS page
 
 ---
 
 ### `nps_get_activities` <sub>tool</sub>
 
-- Accepts a **single** 4-letter `parkCode` or a **single** two-letter `stateCode` — at least one is required
-- Free-text `query`; `limit` (1–50, default 15) and `start` pagination
-- Per activity: title, short description, time commitment, location, coordinates, accessibility, season, and the NPS page
-- Reservation-required and pets-permitted booleans; fee description (absence does not guarantee free)
-- Not every park has a curated list; an empty result is not an error
+- A **single** `parkCode` or a **single** `stateCode` is required, plus an optional `query`; `limit` 1–50 (default 15) with a `start` offset
+- Per activity: title, short description, time commitment, location, coordinates, accessibility, season, reservation-required and pets-permitted flags, fee description, and NPS page
 
 ---
 
 ### `nps_find_events` <sub>tool</sub>
 
-- Filter by `parkCode`, `stateCode`, or free-text `query`; bound the window with `dateStart` / `dateEnd` (`YYYY-MM-DD`)
-- **Page-based pagination** (`pageNumber` / `pageSize`), not offset — the `/events` endpoint differs from the rest of the API
-- Per event: title, date range, time slots, location, category, fee info, and registration / info URLs (HTML stripped to plain text)
-- The events feed is sparser and less consistent than alerts or campgrounds; many parks list few or no events
-- A non-empty upstream `errors[]` array folds into the result notice as a warning rather than failing the request
+- Filter by `parkCode`, `stateCode`, or `query` within a `dateStart` / `dateEnd` window (`YYYY-MM-DD`); pages by `pageNumber` and `pageSize` (1–50, default 15), not by offset
+- Per event: title, date range, `occurrenceDates` inside the window (`isRecurring` marks a series), time slots, location, category, fee, and registration and info URLs
+- Errors NPS reports alongside results fold into the notice instead of failing the call
 
 ## Features
 
@@ -118,6 +102,7 @@ NPS-specific:
 Agent-friendly output:
 
 - Result-set context on every response — `totalCount`, truncation (`truncated` / `shown` / `cap`), applied-filter echo, and empty-result notices reach both the structured and text surfaces
+- Many parks list no campgrounds, curated activities, or events; an empty result comes back with a notice on where else to look, never as an error
 - The `parkCode`-first workflow is encoded in every tool description; `nps_get_park` returns `missingCodes` so a wrong code self-corrects
 - Uncertainty preserved, never fabricated — missing coordinates, directions, fees, and amenity values come back `null`, not a guess; coordinates are never invented for downstream weather lookups
 
@@ -251,8 +236,9 @@ All configuration is validated at startup via Zod schemas. Key environment varia
 | `MCP_AUTH_MODE` | Auth mode: `none`, `jwt`, or `oauth`. | `none` |
 | `MCP_LOG_LEVEL` | Log level (RFC 5424). | `info` |
 | `LOGS_DIR` | Directory for log files (Node.js only). | `<project-root>/logs` |
+| `LOG_TOOL_FAILURE_PAYLOADS` | Log each failed tool call's arguments and result, redacted by key name and capped at `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` (default `16384`). A secret inside a free-form value is not redacted. | `false` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1`. | `in-memory` |
-| `OTEL_ENABLED` | Enable [OpenTelemetry instrumentation](https://github.com/cyanheads/mcp-ts-core/tree/main/docs/telemetry). | `false` |
+| `OTEL_ENABLED` | Enable [OpenTelemetry instrumentation](https://github.com/cyanheads/mcp-ts-core/tree/main/docs/telemetry) (spans, metrics, completion logs). | `false` |
 
 See [`.env.example`](./.env.example) for the full list of optional overrides.
 
