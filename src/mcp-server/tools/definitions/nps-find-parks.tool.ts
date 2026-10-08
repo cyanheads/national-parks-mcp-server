@@ -175,7 +175,6 @@ export const npsFindParks = tool('nps_find_parks', {
       throw ctx.fail(
         'invalid_state_code',
         `stateCode "${input.stateCode}" must be two-letter code(s), comma-separated.`,
-        { ...ctx.recoveryFor('invalid_state_code') },
       );
     }
 

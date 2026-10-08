@@ -152,7 +152,7 @@ export const npsGetActivities = tool('nps_get_activities', {
     // An empty string from a form client reads as omitted, so it falls through to
     // missing_filter rather than a format error.
     if (!input.parkCode && !input.stateCode) {
-      throw ctx.fail('missing_filter', undefined, { ...ctx.recoveryFor('missing_filter') });
+      throw ctx.fail('missing_filter');
     }
     // Code-format validation runs HERE, not as a schema .regex(): a schema
     // rejection reaches the client as -32602 invalid_arguments with only the
@@ -161,14 +161,12 @@ export const npsGetActivities = tool('nps_get_activities', {
       throw ctx.fail(
         'invalid_park_code',
         `parkCode "${input.parkCode}" must be a single 4-letter lowercase code.`,
-        { ...ctx.recoveryFor('invalid_park_code') },
       );
     }
     if (input.stateCode && !/^[A-Za-z]{2}$/.test(input.stateCode)) {
       throw ctx.fail(
         'invalid_state_code',
         `stateCode "${input.stateCode}" must be a single two-letter code.`,
-        { ...ctx.recoveryFor('invalid_state_code') },
       );
     }
 

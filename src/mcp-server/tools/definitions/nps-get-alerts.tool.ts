@@ -173,14 +173,12 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       throw ctx.fail(
         'invalid_park_code',
         `parkCode "${input.parkCode}" must be 4-letter lowercase code(s), comma-separated.`,
-        { ...ctx.recoveryFor('invalid_park_code') },
       );
     }
     if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
       throw ctx.fail(
         'invalid_state_code',
         `stateCode "${input.stateCode}" must be two-letter code(s), comma-separated.`,
-        { ...ctx.recoveryFor('invalid_state_code') },
       );
     }
 

@@ -229,7 +229,6 @@ export const npsGetPark = tool('nps_get_park', {
       throw ctx.fail(
         'invalid_park_code',
         `parkCode ${malformed.map((c) => `"${c}"`).join(', ')} must be 4-letter lowercase code(s).`,
-        { ...ctx.recoveryFor('invalid_park_code') },
       );
     }
 
@@ -238,7 +237,6 @@ export const npsGetPark = tool('nps_get_park', {
     if (parks.length === 0) {
       throw ctx.fail('no_parks_found', `No parks resolved for ${input.parkCode.length} code(s).`, {
         requestedCodes: input.parkCode,
-        ...ctx.recoveryFor('no_parks_found'),
       });
     }
 

@@ -467,26 +467,32 @@ describe('nps_get_alerts', () => {
   });
 
   /* ----------------------------------------------------------------------- *
-   * #3 — invalid code inputs surface the declared recovery hint (not raw Zod)
+   * #3 — invalid code inputs surface the declared recovery hint (not raw Zod).
+   * Asserted through runToolContract, which fills the declared hint the same
+   * way the production handler factory does.
    * ----------------------------------------------------------------------- */
 
   it('rejects a non-lowercase parkCode with the declared recovery hint, before any upstream call', async () => {
-    const input = npsGetAlerts.input.parse({ parkCode: 'Yose' });
-    await expect(npsGetAlerts.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'invalid_park_code',
-        recovery: { hint: expect.stringContaining('nps_find_parks') },
+    const result = await runToolContract(npsGetAlerts, { parkCode: 'Yose' });
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'invalid_park_code',
+          recovery: { hint: expect.stringContaining('nps_find_parks') },
+        },
       },
     });
     expect(getAlerts).not.toHaveBeenCalled();
   });
 
   it('rejects a non-two-letter stateCode with the declared recovery hint', async () => {
-    const input = npsGetAlerts.input.parse({ stateCode: 'Montana' });
-    await expect(npsGetAlerts.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'invalid_state_code',
-        recovery: { hint: expect.stringContaining('two-letter') },
+    const result = await runToolContract(npsGetAlerts, { stateCode: 'Montana' });
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'invalid_state_code',
+          recovery: { hint: expect.stringContaining('two-letter') },
+        },
       },
     });
     expect(getAlerts).not.toHaveBeenCalled();

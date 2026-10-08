@@ -147,15 +147,19 @@ describe('nps_find_events', () => {
    * ----------------------------------------------------------------------- */
 
   it('rejects an impossible calendar date (Feb 31) with the invalid_date recovery hint', async () => {
-    const input = npsFindEvents.input.parse({
+    // runToolContract fills the declared hint the same way the production
+    // handler factory does; a direct handler() throw carries only the reason.
+    const result = await runToolContract(npsFindEvents, {
       parkCode: 'yell',
       dateStart: '2026-02-31',
       dateEnd: '2026-03-02',
     });
-    await expect(npsFindEvents.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'invalid_date',
-        recovery: { hint: expect.stringContaining('calendar date') },
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'invalid_date',
+          recovery: { hint: expect.stringContaining('calendar date') },
+        },
       },
     });
     expect(findEvents).not.toHaveBeenCalled();
@@ -193,26 +197,32 @@ describe('nps_find_events', () => {
   });
 
   /* ----------------------------------------------------------------------- *
-   * #3 — invalid code inputs surface the declared recovery hint (not raw Zod)
+   * #3 — invalid code inputs surface the declared recovery hint (not raw Zod).
+   * Asserted through runToolContract, which fills the declared hint the same
+   * way the production handler factory does.
    * ----------------------------------------------------------------------- */
 
   it('rejects a malformed parkCode with the declared recovery hint, before any upstream call', async () => {
-    const input = npsFindEvents.input.parse({ parkCode: 'Yellowstone' });
-    await expect(npsFindEvents.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'invalid_park_code',
-        recovery: { hint: expect.stringContaining('nps_find_parks') },
+    const result = await runToolContract(npsFindEvents, { parkCode: 'Yellowstone' });
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'invalid_park_code',
+          recovery: { hint: expect.stringContaining('nps_find_parks') },
+        },
       },
     });
     expect(findEvents).not.toHaveBeenCalled();
   });
 
   it('rejects a malformed stateCode with the newly-declared invalid_state_code hint', async () => {
-    const input = npsFindEvents.input.parse({ stateCode: 'California' });
-    await expect(npsFindEvents.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'invalid_state_code',
-        recovery: { hint: expect.stringContaining('two-letter') },
+    const result = await runToolContract(npsFindEvents, { stateCode: 'California' });
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'invalid_state_code',
+          recovery: { hint: expect.stringContaining('two-letter') },
+        },
       },
     });
     expect(findEvents).not.toHaveBeenCalled();

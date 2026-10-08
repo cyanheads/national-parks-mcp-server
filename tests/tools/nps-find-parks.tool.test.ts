@@ -357,15 +357,19 @@ describe('nps_find_parks', () => {
   });
 
   /* ----------------------------------------------------------------------- *
-   * #3 — invalid stateCode surfaces the declared recovery hint (not raw Zod)
+   * #3 — invalid stateCode surfaces the declared recovery hint (not raw Zod).
+   * Asserted through runToolContract, which fills the declared hint the same
+   * way the production handler factory does.
    * ----------------------------------------------------------------------- */
 
   it('rejects a non-two-letter stateCode with the declared recovery hint, before any upstream call', async () => {
-    const input = npsFindParks.input.parse({ stateCode: 'California' });
-    await expect(npsFindParks.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'invalid_state_code',
-        recovery: { hint: expect.stringContaining('two-letter') },
+    const result = await runToolContract(npsFindParks, { stateCode: 'California' });
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        data: {
+          reason: 'invalid_state_code',
+          recovery: { hint: expect.stringContaining('two-letter') },
+        },
       },
     });
     expect(findParks).not.toHaveBeenCalled();

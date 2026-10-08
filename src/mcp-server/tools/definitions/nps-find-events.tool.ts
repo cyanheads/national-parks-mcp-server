@@ -191,14 +191,12 @@ export const npsFindEvents = tool('nps_find_events', {
       throw ctx.fail(
         'invalid_park_code',
         `parkCode "${input.parkCode}" must be 4-letter lowercase code(s), comma-separated.`,
-        { ...ctx.recoveryFor('invalid_park_code') },
       );
     }
     if (input.stateCode && !input.stateCode.split(',').every((t) => /^[A-Za-z]{2}$/.test(t))) {
       throw ctx.fail(
         'invalid_state_code',
         `stateCode "${input.stateCode}" must be two-letter code(s), comma-separated.`,
-        { ...ctx.recoveryFor('invalid_state_code') },
       );
     }
     // Shape first, then the calendar: "2026-02-31" is YYYY-MM-DD but not a real
@@ -210,14 +208,10 @@ export const npsFindEvents = tool('nps_find_events', {
     ] as const) {
       if (!value) continue;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        throw ctx.fail('invalid_date', `${field} "${value}" is not in YYYY-MM-DD format.`, {
-          ...ctx.recoveryFor('invalid_date'),
-        });
+        throw ctx.fail('invalid_date', `${field} "${value}" is not in YYYY-MM-DD format.`);
       }
       if (!isRealCalendarDate(value)) {
-        throw ctx.fail('invalid_date', `${field} "${value}" is not a real calendar date.`, {
-          ...ctx.recoveryFor('invalid_date'),
-        });
+        throw ctx.fail('invalid_date', `${field} "${value}" is not a real calendar date.`);
       }
     }
     // Cross-field date validation.
@@ -225,9 +219,6 @@ export const npsFindEvents = tool('nps_find_events', {
       throw ctx.fail(
         'invalid_date',
         `dateEnd ${input.dateEnd} is before dateStart ${input.dateStart}.`,
-        {
-          ...ctx.recoveryFor('invalid_date'),
-        },
       );
     }
 
