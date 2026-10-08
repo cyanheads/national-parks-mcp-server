@@ -1,6 +1,6 @@
 # national-parks-mcp-server - Directory Structure
 
-Generated on: 2026-09-24 05:46:48
+Generated on: 2026-10-08 20:39:26
 
 ```text
 national-parks-mcp-server/
@@ -127,9 +127,11 @@ national-parks-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   └── tree.ts
 ├── src/

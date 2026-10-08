@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.1](changelog/0.2.x/0.2.1.md) — 2026-10-08
+
+Adopts mcp-ts-core 0.13.14: tool error results carry a requestId, numeric and boolean strings and a lone string for a list are repaired before validation, error data no longer carries stack traces, request context, or rootCause, and the MCP Registry HTTP entry now starts the HTTP transport.
+
 ## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-09-23 · ⚠️ Breaking
 
 Campground amenities can now be null when NPS publishes no value, excluded park directions are omitted rather than null, and malformed park codes, state codes, and dates return -32007 with each tool's declared reason and recovery on every tool.
