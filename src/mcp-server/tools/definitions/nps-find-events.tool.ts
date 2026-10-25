@@ -8,6 +8,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getNpsService } from '@/services/nps/nps-service.js';
 
 export const npsFindEvents = tool('nps_find_events', {
@@ -154,6 +155,7 @@ export const npsFindEvents = tool('nps_find_events', {
       ),
   },
   enrichmentTrailer: {
+    notice: { render: (value) => `> ${escapeMarkdownInline(String(value))}` },
     truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Page Size' },
@@ -297,23 +299,25 @@ export const npsFindEvents = tool('nps_find_events', {
     }
     const lines: string[] = [`## ${result.events.length} events`, ''];
     for (const e of result.events) {
-      lines.push(`### ${e.title}`);
-      lines.push(`**ID:** ${e.id} | **When:** ${whenLine(e.dateStart, e.dateEnd, e.times)}`);
+      lines.push(`${/[\r\n]/.test(e.title) ? '' : '### '}${escapeMarkdownInline(e.title)}`);
+      lines.push(
+        `**ID:** ${escapeMarkdownInline(e.id)} | **When:** ${escapeMarkdownInline(whenLine(e.dateStart, e.dateEnd, e.times))}`,
+      );
       if (e.isRecurring) {
         lines.push(
           e.occurrenceDates.length > 0
-            ? `**Recurring event** — occurrence dates: ${e.occurrenceDates.join(', ')}`
+            ? `**Recurring event** — occurrence dates: ${escapeMarkdownInline(e.occurrenceDates.join(', '))}`
             : '**Recurring event** — no listed occurrences fall in the requested window; the date above is the series anchor, not an occurrence.',
         );
       }
-      if (e.location) lines.push(`**Where:** ${e.location}`);
-      if (e.category) lines.push(`**Category:** ${e.category}`);
-      if (e.parkCode) lines.push(`**Park:** ${e.parkCode}`);
-      if (e.description) lines.push(e.description);
+      if (e.location) lines.push(`**Where:** ${escapeMarkdownInline(e.location)}`);
+      if (e.category) lines.push(`**Category:** ${escapeMarkdownInline(e.category)}`);
+      if (e.parkCode) lines.push(`**Park:** ${escapeMarkdownInline(e.parkCode)}`);
+      if (e.description) lines.push(escapeMarkdownInline(e.description));
       const feeLabel = e.isFree ? 'Free' : 'Not free';
-      lines.push(`**Fee:** ${feeLabel}${e.feeInfo ? ` — ${e.feeInfo}` : ''}`);
-      if (e.registrationUrl) lines.push(`[Register](${e.registrationUrl})`);
-      if (e.infoUrl) lines.push(`[Info](${e.infoUrl})`);
+      lines.push(`**Fee:** ${feeLabel}${e.feeInfo ? ` — ${escapeMarkdownInline(e.feeInfo)}` : ''}`);
+      if (e.registrationUrl) lines.push(markdownLink('Register', e.registrationUrl));
+      if (e.infoUrl) lines.push(markdownLink('Info', e.infoUrl));
       lines.push('');
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];

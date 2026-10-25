@@ -8,6 +8,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getNpsService } from '@/services/nps/nps-service.js';
 import type { NpsCampground } from '@/services/nps/types.js';
 
@@ -158,6 +159,7 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
       ),
   },
   enrichmentTrailer: {
+    notice: { render: (value) => `> ${escapeMarkdownInline(String(value))}` },
     truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
@@ -256,18 +258,22 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
     }
     const lines: string[] = [`## ${result.campgrounds.length} campgrounds`, ''];
     for (const c of result.campgrounds) {
-      lines.push(`### ${c.name}`);
-      lines.push(`**Park:** ${c.parkCode} | **ID:** ${c.id} | **Sites:** ${siteSummary(c)}`);
-      if (c.description) lines.push(c.description);
+      lines.push(`${/[\r\n]/.test(c.name) ? '' : '### '}${escapeMarkdownInline(c.name)}`);
+      lines.push(
+        `**Park:** ${escapeMarkdownInline(c.parkCode)} | **ID:** ${escapeMarkdownInline(c.id)} | **Sites:** ${siteSummary(c)}`,
+      );
+      if (c.description) lines.push(escapeMarkdownInline(c.description));
       lines.push(`**Amenities:** ${amenityLine(c)}`);
-      if (c.fee) lines.push(`**Fee:** $${c.fee}`);
-      if (c.reservationInfo) lines.push(`**Reservations:** ${c.reservationInfo}`);
-      if (c.reservationUrl) lines.push(`[Book](${c.reservationUrl})`);
-      if (c.accessibility) lines.push(`**Accessibility:** ${c.accessibility}`);
+      if (c.fee) lines.push(`**Fee:** $${escapeMarkdownInline(c.fee)}`);
+      if (c.reservationInfo)
+        lines.push(`**Reservations:** ${escapeMarkdownInline(c.reservationInfo)}`);
+      if (c.reservationUrl) lines.push(markdownLink('Book', c.reservationUrl));
+      if (c.accessibility)
+        lines.push(`**Accessibility:** ${escapeMarkdownInline(c.accessibility)}`);
       if (c.latitude != null && c.longitude != null) {
         lines.push(`**Coordinates:** ${c.latitude}, ${c.longitude}`);
       }
-      if (c.url) lines.push(`[Campground page](${c.url})`);
+      if (c.url) lines.push(markdownLink('Campground page', c.url));
       lines.push('');
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];

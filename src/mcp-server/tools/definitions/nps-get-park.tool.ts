@@ -7,6 +7,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getNpsService } from '@/services/nps/nps-service.js';
 
 export const npsGetPark = tool('nps_get_park', {
@@ -199,9 +200,13 @@ export const npsGetPark = tool('nps_get_park', {
       .describe('Guidance when one or more codes did not resolve, or when none did.'),
   },
   enrichmentTrailer: {
+    notice: { render: (value) => `> ${escapeMarkdownInline(String(value))}` },
     requestedCount: { label: 'Requested' },
     returnedCount: { label: 'Returned' },
-    missingCodes: { label: 'Unresolved codes', render: (v) => (v as string[]).join(', ') },
+    missingCodes: {
+      label: 'Unresolved codes',
+      render: (v) => escapeMarkdownInline((v as string[]).join(', ')),
+    },
   },
   errors: [
     {
@@ -261,24 +266,33 @@ export const npsGetPark = tool('nps_get_park', {
   format: (result) => {
     const lines: string[] = [];
     for (const p of result.parks) {
-      lines.push(`# ${p.fullName} (${p.parkCode})`);
-      lines.push(`**${p.designation || 'NPS site'}** · States: ${p.states || 'n/a'}`);
-      if (p.description) lines.push('', p.description);
-      if (p.activities?.length) lines.push('', `**Activities:** ${p.activities.join(', ')}`);
-      if (p.topics?.length) lines.push(`**Topics:** ${p.topics.join(', ')}`);
+      lines.push(
+        `${/[\r\n]/.test(p.fullName + p.parkCode) ? '' : '# '}${escapeMarkdownInline(p.fullName)} (${escapeMarkdownInline(p.parkCode)})`,
+      );
+      lines.push(
+        `**${escapeMarkdownInline(p.designation || 'NPS site')}** · States: ${escapeMarkdownInline(p.states || 'n/a')}`,
+      );
+      if (p.description) lines.push('', escapeMarkdownInline(p.description));
+      if (p.activities?.length)
+        lines.push('', `**Activities:** ${escapeMarkdownInline(p.activities.join(', '))}`);
+      if (p.topics?.length) lines.push(`**Topics:** ${escapeMarkdownInline(p.topics.join(', '))}`);
       renderFees(lines, p);
       renderHours(lines, p);
       renderContacts(lines, p);
-      if (p.directionsInfo) lines.push('', `**Directions:** ${p.directionsInfo}`);
-      if (p.directionsUrl) lines.push(`[Directions page](${p.directionsUrl})`);
-      if (p.weatherOverview) lines.push('', `**Weather:** ${p.weatherOverview}`);
+      if (p.directionsInfo)
+        lines.push('', `**Directions:** ${escapeMarkdownInline(p.directionsInfo)}`);
+      if (p.directionsUrl) lines.push(markdownLink('Directions page', p.directionsUrl));
+      if (p.weatherOverview)
+        lines.push('', `**Weather:** ${escapeMarkdownInline(p.weatherOverview)}`);
       if (p.latitude != null && p.longitude != null) {
         lines.push(`**Coordinates:** ${p.latitude}, ${p.longitude}`);
       }
       if (p.images?.length) {
         lines.push('', '**Images:**');
         for (const img of p.images) {
-          lines.push(`- ${img.title}: ![${img.altText}](${img.url})`);
+          lines.push(
+            `- ${escapeMarkdownInline(img.title)}: ${markdownImage(img.altText, img.url)}`,
+          );
         }
         if (p.imagesTruncated) {
           lines.push(
@@ -286,7 +300,7 @@ export const npsGetPark = tool('nps_get_park', {
           );
         }
       }
-      if (p.url) lines.push('', `[Full park page](${p.url})`);
+      if (p.url) lines.push('', markdownLink('Full park page', p.url));
       lines.push('');
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];
@@ -301,11 +315,17 @@ type ParkDetailItem = z.infer<typeof npsGetPark.output>['parks'][number];
 function renderFees(lines: string[], p: ParkDetailItem): void {
   if (p.entranceFees && p.entranceFees.length > 0) {
     lines.push('', '**Entrance fees:**');
-    for (const f of p.entranceFees) lines.push(`- ${f.title}: $${f.cost} — ${f.description}`);
+    for (const f of p.entranceFees)
+      lines.push(
+        `- ${escapeMarkdownInline(f.title)}: $${escapeMarkdownInline(f.cost)} — ${escapeMarkdownInline(f.description)}`,
+      );
   }
   if (p.entrancePasses && p.entrancePasses.length > 0) {
     lines.push('', '**Passes:**');
-    for (const f of p.entrancePasses) lines.push(`- ${f.title}: $${f.cost} — ${f.description}`);
+    for (const f of p.entrancePasses)
+      lines.push(
+        `- ${escapeMarkdownInline(f.title)}: $${escapeMarkdownInline(f.cost)} — ${escapeMarkdownInline(f.description)}`,
+      );
   }
 }
 
@@ -313,10 +333,10 @@ function renderHours(lines: string[], p: ParkDetailItem): void {
   if (!p.operatingHours || p.operatingHours.length === 0) return;
   lines.push('', '**Operating hours:**');
   for (const h of p.operatingHours) {
-    lines.push(`- **${h.name}:** ${h.description}`);
+    lines.push(`- **${escapeMarkdownInline(h.name)}:** ${escapeMarkdownInline(h.description)}`);
     const sh = h.standardHours;
     lines.push(
-      `  Mon ${sh.monday} · Tue ${sh.tuesday} · Wed ${sh.wednesday} · Thu ${sh.thursday} · Fri ${sh.friday} · Sat ${sh.saturday} · Sun ${sh.sunday}`,
+      `  Mon ${escapeMarkdownInline(sh.monday)} · Tue ${escapeMarkdownInline(sh.tuesday)} · Wed ${escapeMarkdownInline(sh.wednesday)} · Thu ${escapeMarkdownInline(sh.thursday)} · Fri ${escapeMarkdownInline(sh.friday)} · Sat ${escapeMarkdownInline(sh.saturday)} · Sun ${escapeMarkdownInline(sh.sunday)}`,
     );
   }
 }
@@ -324,9 +344,10 @@ function renderHours(lines: string[], p: ParkDetailItem): void {
 function renderContacts(lines: string[], p: ParkDetailItem): void {
   if (!p.contacts) return;
   const phones = p.contacts.phoneNumbers.map(
-    (n) => `${n.phoneNumber}${n.type ? ` (${n.type})` : ''}`,
+    (n) =>
+      `${escapeMarkdownInline(n.phoneNumber)}${n.type ? ` (${escapeMarkdownInline(n.type)})` : ''}`,
   );
-  const emails = p.contacts.emailAddresses.map((e) => e.emailAddress);
+  const emails = p.contacts.emailAddresses.map((e) => escapeMarkdownInline(e.emailAddress));
   if (phones.length > 0) lines.push('', `**Phone:** ${phones.join(', ')}`);
   if (emails.length > 0) lines.push(`**Email:** ${emails.join(', ')}`);
 }

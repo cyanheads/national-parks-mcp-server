@@ -8,6 +8,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getNpsService } from '@/services/nps/nps-service.js';
 
 export const npsGetActivities = tool('nps_get_activities', {
@@ -120,6 +121,7 @@ export const npsGetActivities = tool('nps_get_activities', {
       ),
   },
   enrichmentTrailer: {
+    notice: { render: (value) => `> ${escapeMarkdownInline(String(value))}` },
     truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
@@ -235,25 +237,28 @@ export const npsGetActivities = tool('nps_get_activities', {
     }
     const lines: string[] = [`## ${result.activities.length} things to do`, ''];
     for (const a of result.activities) {
-      lines.push(`### ${a.title}`);
-      lines.push(`**ID:** ${a.id}`);
+      lines.push(`${/[\r\n]/.test(a.title) ? '' : '### '}${escapeMarkdownInline(a.title)}`);
+      lines.push(`**ID:** ${escapeMarkdownInline(a.id)}`);
       const meta = [
-        a.duration ? `**Duration:** ${a.duration}` : null,
-        a.season.length > 0 ? `**Season:** ${a.season.join(', ')}` : null,
+        a.duration ? `**Duration:** ${escapeMarkdownInline(a.duration)}` : null,
+        a.season.length > 0 ? `**Season:** ${escapeMarkdownInline(a.season.join(', '))}` : null,
       ].filter(Boolean);
       if (meta.length > 0) lines.push(meta.join(' | '));
-      if (a.shortDescription) lines.push(a.shortDescription);
-      if (a.location) lines.push(`**Location:** ${a.location}`);
+      if (a.shortDescription) lines.push(escapeMarkdownInline(a.shortDescription));
+      if (a.location) lines.push(`**Location:** ${escapeMarkdownInline(a.location)}`);
       lines.push(
         `**Reservation required:** ${a.reservationRequired ? 'Yes' : 'No'} · **Pets:** ${a.petsPermitted ? 'OK' : 'Not permitted'}`,
       );
-      lines.push(`**Fee:** ${a.feeDescription ?? 'None listed (verify on the park page)'}`);
-      if (a.accessibility) lines.push(`**Accessibility:** ${a.accessibility}`);
+      lines.push(
+        `**Fee:** ${escapeMarkdownInline(a.feeDescription ?? 'None listed (verify on the park page)')}`,
+      );
+      if (a.accessibility)
+        lines.push(`**Accessibility:** ${escapeMarkdownInline(a.accessibility)}`);
       if (a.latitude != null && a.longitude != null) {
         lines.push(`**Coordinates:** ${a.latitude}, ${a.longitude}`);
       }
-      if (a.parkCode) lines.push(`**Park:** ${a.parkCode}`);
-      if (a.url) lines.push(`[Details](${a.url})`);
+      if (a.parkCode) lines.push(`**Park:** ${escapeMarkdownInline(a.parkCode)}`);
+      if (a.url) lines.push(markdownLink('Details', a.url));
       lines.push('');
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];

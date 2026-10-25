@@ -8,6 +8,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getNpsService } from '@/services/nps/nps-service.js';
 import type { NpsAlert } from '@/services/nps/types.js';
 
@@ -143,6 +144,7 @@ export const npsGetAlerts = tool('nps_get_alerts', {
       ),
   },
   enrichmentTrailer: {
+    notice: { render: (value) => `> ${escapeMarkdownInline(String(value))}` },
     truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
@@ -279,12 +281,14 @@ export const npsGetAlerts = tool('nps_get_alerts', {
     // different result orders.
     const lines: string[] = [`## ${result.alerts.length} active alerts`, ''];
     for (const a of result.alerts) {
-      lines.push(`### [${a.category || 'Alert'}] ${a.title}`);
       lines.push(
-        `**Park:** ${a.parkCode} | **Updated:** ${a.lastIndexedDate ?? 'unknown'} | **ID:** ${a.id}`,
+        `${/[\r\n]/.test(a.category + a.title) ? '' : '### '}[${escapeMarkdownInline(a.category || 'Alert')}] ${escapeMarkdownInline(a.title)}`,
       );
-      if (a.description) lines.push(a.description);
-      if (a.url) lines.push(`[Details](${a.url})`);
+      lines.push(
+        `**Park:** ${escapeMarkdownInline(a.parkCode)} | **Updated:** ${escapeMarkdownInline(a.lastIndexedDate ?? 'unknown')} | **ID:** ${escapeMarkdownInline(a.id)}`,
+      );
+      if (a.description) lines.push(escapeMarkdownInline(a.description));
+      if (a.url) lines.push(markdownLink('Details', a.url));
       lines.push('');
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];

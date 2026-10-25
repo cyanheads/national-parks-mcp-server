@@ -11,6 +11,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getNpsService } from '@/services/nps/nps-service.js';
 import type { NpsParkSummary } from '@/services/nps/types.js';
 
@@ -152,6 +153,7 @@ export const npsFindParks = tool('nps_find_parks', {
       ),
   },
   enrichmentTrailer: {
+    notice: { render: (value) => `> ${escapeMarkdownInline(String(value))}` },
     truncated: { label: 'Truncated' },
     shown: { label: 'Shown' },
     cap: { label: 'Limit' },
@@ -272,21 +274,21 @@ export const npsFindParks = tool('nps_find_parks', {
     }
     const lines: string[] = [`## ${result.parks.length} parks`, ''];
     for (const p of result.parks) {
-      lines.push(`### ${p.fullName}`);
+      lines.push(`${/[\r\n]/.test(p.fullName) ? '' : '### '}${escapeMarkdownInline(p.fullName)}`);
       lines.push(
-        `**parkCode:** ${p.parkCode} | **${p.designation || 'NPS site'}** | **States:** ${p.states || 'n/a'}`,
+        `**parkCode:** ${escapeMarkdownInline(p.parkCode)} | **${escapeMarkdownInline(p.designation || 'NPS site')}** | **States:** ${escapeMarkdownInline(p.states || 'n/a')}`,
       );
-      if (p.description) lines.push(p.description);
+      if (p.description) lines.push(escapeMarkdownInline(p.description));
       lines.push(formatActivities(p));
       lines.push(
         p.entranceFee
-          ? `**Entrance fee:** $${p.entranceFee}`
+          ? `**Entrance fee:** $${escapeMarkdownInline(p.entranceFee)}`
           : '**Entrance fee:** Fee-free / see park page',
       );
       if (p.latitude != null && p.longitude != null) {
         lines.push(`**Coordinates:** ${p.latitude}, ${p.longitude}`);
       }
-      if (p.url) lines.push(`[NPS page](${p.url})`);
+      if (p.url) lines.push(markdownLink('NPS page', p.url));
       lines.push('');
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];
@@ -297,7 +299,7 @@ function formatActivities(p: NpsParkSummary): string {
   if (p.activities.length === 0) return '**Activities:** none listed';
   // Render the full list — structuredContent carries every activity, so the text
   // channel must too, or content[]-only clients silently see fewer of them.
-  return `**Activities:** ${p.activities.join(', ')}`;
+  return `**Activities:** ${escapeMarkdownInline(p.activities.join(', '))}`;
 }
 
 /** Lowercase + strip diacritics + collapse whitespace, so a query compares
