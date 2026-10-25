@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.2](changelog/0.2.x/0.2.2.md) — 2026-10-25
+
+Preserve literal NPS text, links, images, and caller notices in Markdown responses.
+
 ## [0.2.1](changelog/0.2.x/0.2.1.md) — 2026-10-08
 
 Adopts mcp-ts-core 0.13.14: tool error results carry a requestId, numeric and boolean strings and a lone string for a list are repaired before validation, error data no longer carries stack traces, request context, or rootCause, and the MCP Registry HTTP entry now starts the HTTP transport.

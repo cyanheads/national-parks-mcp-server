@@ -1,6 +1,6 @@
 # national-parks-mcp-server - Directory Structure
 
-Generated on: 2026-10-08 20:39:26
+Generated on: 2026-10-25 09:20:31
 
 ```text
 national-parks-mcp-server/
@@ -161,6 +161,7 @@ national-parks-mcp-server/
 │   ├── services/
 │   │   └── nps-service.test.ts
 │   └── tools/
+│       ├── markdown-parity.test.ts
 │       ├── nps-find-campgrounds.tool.test.ts
 │       ├── nps-find-events.tool.test.ts
 │       ├── nps-find-parks.tool.test.ts
