@@ -1,6 +1,6 @@
 /**
  * @fileoverview nps_find_campgrounds — campgrounds at a park or state with
- * amenities (water, showers, hookups, dump station), reservable vs. first-come
+ * amenities (water, showers, RV access, dump station), reservable vs. first-come
  * site counts, reservation info, accessibility, and fees flattened to what a
  * camper actually filters on.
  * @module mcp-server/tools/definitions/nps-find-campgrounds.tool
@@ -15,7 +15,7 @@ import type { NpsCampground } from '@/services/nps/types.js';
 export const npsFindCampgrounds = tool('nps_find_campgrounds', {
   title: 'national-parks-mcp-server: find campgrounds',
   description:
-    'Campgrounds at a park or across a state: amenities (potable water, showers, RV dump station, toilets, trash collection, RV access), reservable vs. first-come-first-served site counts, reservation guidance and booking URL, accessibility, and fees — answering "where can I camp at Zion, and can I get an RV hookup?" Get park codes from nps_find_parks. Some parks list lodging or backcountry permits instead of NPS-managed campgrounds; an empty result is not an error.',
+    'Campgrounds at a park or across a state: amenities (potable water, showers, RV dump station, toilets, trash collection, RV access), reservable vs. first-come-first-served site counts, reservation guidance and booking URL, accessibility, and fees. Check the linked campground page for RV hookups and date-specific availability. Get park codes from nps_find_parks. Some parks list lodging or backcountry permits instead of NPS-managed campgrounds; an empty result is not an error.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z

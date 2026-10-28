@@ -28,6 +28,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 
 # Copy the rest of the source code
 COPY . .
+RUN mkdir -p skills
 
 # Build the application
 RUN bun run build
@@ -124,7 +125,7 @@ ENV NODE_ENV=production
 # OCI image metadata (https://github.com/opencontainers/image-spec/blob/main/annotations.md)
 ARG APP_VERSION
 LABEL org.opencontainers.image.title="national-parks-mcp-server"
-LABEL org.opencontainers.image.description="Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API."
+LABEL org.opencontainers.image.description="Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API. STDIO or Streamable HTTP."
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.version="${APP_VERSION}"
 LABEL org.opencontainers.image.source="https://github.com/cyanheads/national-parks-mcp-server"
@@ -136,6 +137,7 @@ COPY --from=deps /usr/src/app/node_modules ./node_modules
 
 # Copy the compiled application code from the build stage
 COPY --from=build /usr/src/app/dist ./dist
+COPY --from=build /usr/src/app/skills ./skills
 
 # Mirror CLI (MirrorService adopters only — Tier 3, opt-in):
 # Copy your mirror lifecycle scripts and emit a runtime tsconfig so Bun resolves

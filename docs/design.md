@@ -15,13 +15,13 @@ Plan a national-park trip — parks, alerts, campgrounds, and things to do acros
 | `nps_find_parks` | Resolve a place name, state, or free-text query to NPS parks — **the required first step**; returns `parkCode` (the spine the other tools key on) plus a trip-planning summary. US NPS sites only. | `query`, `stateCode`, `activity`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
 | `nps_get_park` | Full trip-planning detail for one or more parks by `parkCode`: description, activities, fees & passes, season hours, contacts, directions, weather overview, images, NPS URL. | `parkCode` (1–10), `fields` | `readOnlyHint: true`, `openWorldHint: true` |
 | `nps_get_alerts` | Current alerts for a park or state — closures, hazards, caution, information. The time-sensitive headline tool; surfaces category + recency prominently. | `parkCode`, `stateCode`, `category`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
-| `nps_find_campgrounds` | Campgrounds at a park: amenities (hookups, potable water, showers, dump station), reservable vs. first-come site counts, reservation info, accessibility, fees. | `parkCode`, `stateCode`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
+| `nps_find_campgrounds` | Campgrounds at a park: amenities (RV access, potable water, showers, dump station), reservable vs. first-come site counts, reservation info, accessibility, fees. | `parkCode`, `stateCode`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
 | `nps_get_activities` | Curated things to do and points of interest for a park: title, description, duration, accessibility, location, fee/pet/reservation flags, season. | `parkCode`, `stateCode`, `query`, `limit`, `start` | `readOnlyHint: true`, `openWorldHint: true` |
 | `nps_find_events` | Scheduled events at a park within a date range: title, description, dates/times, location, category, fee, registration/info URLs. | `parkCode`, `stateCode`, `dateStart`, `dateEnd`, `query`, `pageSize`, `pageNumber` | `readOnlyHint: true`, `openWorldHint: true` |
 
 ### Resources
 
-None. Park/alert/campground records are point-in-time API reads with no stable, injectable identity that earns a resource URI, and every datum is reachable through the tool surface (tool-only clients lose nothing). `parkCode` is a natural key, but a `nps://park/{parkCode}` resource would only duplicate `nps_get_park` for the minority of clients that support resources — deferred. Revisit if a clear injectable-context use case appears.
+The `national-parks-guide` skill is served as a `skill://` resource through the framework Skills extension. Park/alert/campground records remain point-in-time tool reads; a `nps://park/{parkCode}` resource would duplicate `nps_get_park` without adding a distinct use case.
 
 ### Prompts
 
@@ -468,7 +468,7 @@ Empty results are never an error.
 
 ### `nps_find_campgrounds`
 
-**Purpose:** Campgrounds at a park: amenities (hookups, potable water, showers, dump station), reservable vs. first-come site counts, reservation info, accessibility, and fees — answering "where can I camp at Zion, and can I get an RV hookup?"
+**Purpose:** Campgrounds at a park: amenities (RV access, potable water, showers, dump station), reservable vs. first-come site counts, reservation info, accessibility, and fees. Hookup requirements and date-specific availability need verification on the linked campground and reservation pages.
 
 **Endpoint:** `GET /campgrounds` with `parkCode`, `stateCode`, `q`, `limit`, `start`.
 
@@ -555,7 +555,7 @@ output: z.object({
 
 `rvAllowed` comes from `accessibility.rvAllowed` (`"1"`/`"0"`), `null` when empty.
 
-**`format()`:** per campground — `### {name}` · `**Park:** {parkCode} | **ID:** {id} | **Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` · description · `**Amenities:**` with an explicit value per amenity (`Potable water: Yes · Showers: No · … · Trash collection: Unknown` — `Unknown` for a `null` amenity, never `No`) · `**Fee:** ${fee}` · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `**Coordinates:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the hookup/water amenities prominently.
+**`format()`:** per campground — `### {name}` · `**Park:** {parkCode} | **ID:** {id} | **Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` · description · `**Amenities:**` with an explicit value per amenity (`Potable water: Yes · Showers: No · … · Trash collection: Unknown` — `Unknown` for a `null` amenity, never `No`) · `**Fee:** ${fee}` · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `**Coordinates:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the RV-access/water amenities prominently.
 
 ---
 
@@ -740,7 +740,7 @@ No single tool makes ≥3 upstream calls — this is a flat multi-endpoint surfa
 | 2d | `nps_get_activities` | what to do | itinerary |
 | 2e | `nps_find_events` | scheduled events | itinerary timing |
 
-`nps_get_park` is the one batching tool (≤10 codes → 1 call); that's the only multi-input efficiency play. The "plan my visit" moonshot is this chain plus an `openstreetmap_geocode` ("near me" → coordinates → nearest parks) and an `nws_get_forecast` on the coordinates — a cross-server composition the calling agent assembles, intentionally **not** built as a workflow tool here (it would couple this server to three others).
+`nps_get_park` batches up to ten park codes into one detail request. Alerts, campgrounds, and events also accept comma-separated park codes; activities require a single park or state code. The calling agent combines these reads with mapping and weather sources when a trip needs proximity, routes, or forecasts. The published `national-parks-guide` skill carries the identity, access, reservation, and event-date gates for that composition.
 
 ---
 
@@ -818,7 +818,7 @@ Each step is independently testable.
 
    **The empty branch of `format()` defers rather than concludes.** `format()` is handed the domain payload alone, so `totalCount` is structurally out of reach and it cannot distinguish an all-clear from a page past the end. Every list tool's empty text therefore points at the notice ("See the notice for what this means") instead of asserting an interpretation it has no basis for — the notice is the single place that owns that call. This matters most on `nps_get_alerts`, where a wrong guess reads as a safety all-clear.
 
-10. **No auth scopes, no resources, no prompts, no DataCanvas/Mirror.** Read-only single-source public data → stdio + HTTP-`none`, scopes add nothing. Data is point-in-time discovery/detail, not analytical row sets (no SQL workspace) and not a bulk corpus queried more than it changes (no mirror). Resources would duplicate tools for the resource-supporting minority; deferred.
+10. **No auth scopes, domain resources, prompts, or DataCanvas/Mirror.** Read-only single-source public data → stdio + HTTP-`none`, scopes add nothing. Data is point-in-time discovery/detail, not analytical row sets (no SQL workspace) and not a bulk corpus queried more than it changes (no mirror). The published guide is a skill resource; park records remain tool reads.
 
 11. **`openWorldHint: true` on all tools.** Every tool hits a live external API whose results change (alerts daily, events seasonally) — the world is open. All are `readOnlyHint: true` (no writes). No `destructiveHint`/`idempotentHint` relevant.
 
@@ -891,4 +891,4 @@ All changes were verified against live API responses (a valid key confirmed work
 - Required/optional decisions on truncation fields — `shown`/`cap` remain `.optional()` per the -32007 avoidance rule; `totalCount` stays required
 - Rate limit estimate (1,000/hr), retry strategy, and resilience design — unchanged
 - Identity (`national-parks-mcp-server`, never Title Case) — unchanged
-- No resources/prompts/DataCanvas — confirmed correct for this domain
+- No domain resources/prompts/DataCanvas; the published guide uses the framework Skills extension

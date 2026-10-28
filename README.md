@@ -1,13 +1,13 @@
 <div align="center">
   <h1>@cyanheads/national-parks-mcp-server</h1>
   <p><b>Plan US National Park Service trips — find parks, check alerts and closures, find campgrounds, browse things to do and events via the NPS Data API. STDIO or Streamable HTTP.</b>
-  <div>6 Tools</div>
+  <div>6 Tools • 1 Skill</div>
   </p>
 </div>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/national-parks-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.4.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/national-parks-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/national-parks-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -101,6 +101,7 @@ NPS-specific:
 
 Agent-friendly output:
 
+- Visit-planning guidance — the published [`national-parks-guide`](./skills/national-parks-guide/SKILL.md) skill checks park identity, access, reservation evidence, and event dates. It ships with plugins, npm, Docker, and MCPB, and MCP clients discover it through the Skills extension (`skill://national-parks-guide/SKILL.md`).
 - Result-set context on every response — `totalCount`, truncation (`truncated` / `shown` / `cap`), applied-filter echo, and empty-result notices reach both the structured and text surfaces
 - Many parks list no campgrounds, curated activities, or events; an empty result comes back with a notice on where else to look, never as an error
 - The `parkCode`-first workflow is encoded in every tool description; `nps_get_park` returns `missingCodes` so a wrong code self-corrects
@@ -108,76 +109,27 @@ Agent-friendly output:
 
 ## Getting started
 
-### Public Hosted Instance
-
-A public instance is available at `https://national-parks.caseyjhand.com/mcp` — no installation required. It serves Streamable HTTP; each client takes its own config shape.
-
-For Claude Code:
+Connect to the hosted instance, no install:
 
 ```sh
 claude mcp add --transport http national-parks-mcp-server https://national-parks.caseyjhand.com/mcp
 ```
 
-For Cline (`cline_mcp_settings.json`):
+Or run it locally:
 
-```json
-{
-  "mcpServers": {
-    "national-parks-mcp-server": {
-      "type": "streamableHttp",
-      "url": "https://national-parks.caseyjhand.com/mcp"
-    }
-  }
-}
+```sh
+claude mcp add national-parks-mcp-server -e NPS_API_KEY=your-key -- npx -y @cyanheads/national-parks-mcp-server
 ```
 
-For Cursor (`mcp.json`):
+For other clients, add this to the MCP config file:
 
 ```json
 {
   "mcpServers": {
     "national-parks-mcp-server": {
-      "url": "https://national-parks.caseyjhand.com/mcp"
-    }
-  }
-}
-```
-
-Claude Desktop adds remote servers under Settings → Connectors.
-
-### Self-Hosted / Local
-
-Add the following to your MCP client configuration file. A free NPS Data API key is required — [instant signup here](https://www.nps.gov/subjects/developer/get-started.htm).
-
-```json
-{
-  "mcpServers": {
-    "national-parks-mcp-server": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@cyanheads/national-parks-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
-        "NPS_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
-```
-
-Or with npx (no Bun required):
-
-```json
-{
-  "mcpServers": {
-    "national-parks-mcp-server": {
-      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@cyanheads/national-parks-mcp-server@latest"],
+      "args": ["-y", "@cyanheads/national-parks-mcp-server"],
       "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "MCP_LOG_LEVEL": "info",
         "NPS_API_KEY": "your-api-key"
       }
     }
@@ -185,63 +137,7 @@ Or with npx (no Bun required):
 }
 ```
 
-Or with Docker:
-
-```json
-{
-  "mcpServers": {
-    "national-parks-mcp-server": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-e", "MCP_TRANSPORT_TYPE=stdio",
-        "-e", "NPS_API_KEY=your-api-key",
-        "ghcr.io/cyanheads/national-parks-mcp-server:latest"
-      ]
-    }
-  }
-}
-```
-
-For Streamable HTTP, set the transport and start the server:
-
-```sh
-MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 NPS_API_KEY=... bun run start:http
-# Server listens at http://localhost:3010/mcp
-```
-
-### Prerequisites
-
-- [Bun v1.4](https://bun.sh/) or higher (or Node.js v24+).
-- A free NPS Data API key — [instant signup](https://www.nps.gov/subjects/developer/get-started.htm). The server fails to start without it.
-
-### Installation
-
-1. **Clone the repository:**
-
-```sh
-git clone https://github.com/cyanheads/national-parks-mcp-server.git
-```
-
-2. **Navigate into the directory:**
-
-```sh
-cd national-parks-mcp-server
-```
-
-3. **Install dependencies:**
-
-```sh
-bun install
-```
-
-4. **Configure environment:**
-
-```sh
-cp .env.example .env
-# edit .env and set NPS_API_KEY
-```
+Get a free [NPS Data API key](https://www.nps.gov/subjects/developer/get-started.htm). For Docker or a source build, see [Running the server](#running-the-server).
 
 ## Configuration
 
@@ -268,6 +164,16 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
+Requires [Bun v1.4](https://bun.sh/) or higher (or Node.js v24+) and an NPS Data API key.
+
+- **Clone and install:**
+
+  ```sh
+  git clone https://github.com/cyanheads/national-parks-mcp-server.git
+  cd national-parks-mcp-server && bun install
+  cp .env.example .env   # set NPS_API_KEY
+  ```
+
 - **Build and run:**
 
   ```sh
@@ -291,11 +197,10 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 ### Docker
 
 ```sh
-docker build -t national-parks-mcp-server .
-docker run --rm -e NPS_API_KEY=your-key -p 3010:3010 national-parks-mcp-server
+docker run --rm -e NPS_API_KEY=your-key -p 3010:3010 ghcr.io/cyanheads/national-parks-mcp-server:latest
 ```
 
-The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `/var/log/national-parks-mcp-server`. OpenTelemetry peer dependencies are installed by default — build with `--build-arg OTEL_ENABLED=false` to omit them.
+The image defaults to HTTP transport, stateless session mode, and logs to `/var/log/national-parks-mcp-server`. To run over stdio, use `docker run -i --rm -e MCP_TRANSPORT_TYPE=stdio -e NPS_API_KEY=your-key ghcr.io/cyanheads/national-parks-mcp-server:latest`. Build locally with `docker build -t national-parks-mcp-server .`; OpenTelemetry peers are installed by default — add `--build-arg OTEL_ENABLED=false` to omit them.
 
 ## Project structure
 
@@ -305,6 +210,8 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 | `src/config` | Server-specific environment variable parsing and validation with Zod. |
 | `src/mcp-server/tools` | Tool definitions (`*.tool.ts`). |
 | `src/services/nps` | NPS Data API service — HTTP client, retry boundary, error-envelope detection, and all upstream normalization. |
+| `skills/` | Published visit-planning guidance for agents using the tools, also served over MCP. |
+| `framework-skills/` | Development guidance synced from the framework. |
 | `tests/` | Unit and integration tests mirroring `src/`. |
 
 ## Development guide

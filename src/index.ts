@@ -25,6 +25,7 @@ await createApp({
    * failure mode. A meaningful MCP_SESSION_MODE still wins.
    */
   sessionMode: 'stateless',
+  skills: 'skills',
   tools: [
     npsFindParks,
     npsGetPark,
