@@ -212,7 +212,7 @@ describe('nps_get_activities', () => {
       expect(text).toContain('**89 total**');
       expect(text).toContain('**Shown:** 2');
       expect(text).toContain('**Limit:** 2');
-      expect(text).toContain('**Filters:** parkCode=acad');
+      expect(text).toContain('**Filters:** `parkCode=acad`');
       expect(text).toContain('Request the next page with start=2.');
     });
 

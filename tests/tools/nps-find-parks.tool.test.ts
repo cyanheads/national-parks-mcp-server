@@ -410,7 +410,7 @@ describe('nps_find_parks', () => {
       expect(text).toContain('**34 total**');
       expect(text).toContain('**Shown:** 2');
       expect(text).toContain('**Limit:** 2');
-      expect(text).toContain('**Filters:** stateCode=CA');
+      expect(text).toContain('**Filters:** `stateCode=CA`');
       expect(text).toContain('Request the next page with start=2.');
     });
 

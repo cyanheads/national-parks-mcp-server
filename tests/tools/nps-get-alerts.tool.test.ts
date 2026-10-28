@@ -530,8 +530,8 @@ describe('nps_get_alerts', () => {
       expect(text).toContain('**53 total**');
       expect(text).toContain('**Shown:** 2');
       expect(text).toContain('**Limit:** 2');
-      expect(text).toContain('**By category:** Park Closure: 1, Caution: 1');
-      expect(text).toContain('**Filters:** stateCode=CA');
+      expect(text).toContain('**By category:** `Park Closure: 1, Caution: 1`');
+      expect(text).toContain('**Filters:** `stateCode=CA`');
       expect(text).toContain('Request the next page with start=2.');
     });
 

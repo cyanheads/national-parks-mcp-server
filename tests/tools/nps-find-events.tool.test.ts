@@ -380,7 +380,7 @@ describe('nps_find_events', () => {
       expect(text).toContain('**3 total**');
       expect(text).toContain('**Shown:** 1');
       expect(text).toContain('**Page Size:** 1');
-      expect(text).toContain('**Filters:** parkCode=yell, dates=upcoming');
+      expect(text).toContain('**Filters:** `parkCode=yell, dates=upcoming`');
       expect(text).toContain(`Request the next page with pageNumber=${next}.`);
     });
 
