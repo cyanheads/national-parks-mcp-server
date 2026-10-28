@@ -1,6 +1,6 @@
 # national-parks-mcp-server - Directory Structure
 
-Generated on: 2026-10-25 09:20:31
+Generated on: 2026-10-28 12:03:23
 
 ```text
 national-parks-mcp-server/
@@ -37,6 +37,8 @@ national-parks-mcp-server/
 │   ├── add-resource/
 │   │   └── SKILL.md
 │   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-skill/
 │   │   └── SKILL.md
 │   ├── add-test/
 │   │   └── SKILL.md
@@ -134,6 +136,9 @@ national-parks-mcp-server/
 │   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   └── tree.ts
+├── skills/
+│   └── national-parks-guide/
+│       └── SKILL.md
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -158,6 +163,8 @@ national-parks-mcp-server/
 ├── tests/
 │   ├── prompts/
 │   ├── resources/
+│   ├── scripts/
+│   │   └── packaging-agent-docs.test.ts
 │   ├── services/
 │   │   └── nps-service.test.ts
 │   └── tools/
@@ -184,7 +191,9 @@ national-parks-mcp-server/
 ├── Dockerfile
 ├── LICENSE
 ├── manifest.json
+├── mcp.json
 ├── package.json
+├── plugin.json
 ├── README.md
 ├── server.json
 ├── tsconfig.build.json
