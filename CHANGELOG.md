@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-10-28
+
+Publish a visit-planning skill over MCP and adopt framework HTTP cleanup, literal enrichment rendering, and bundle packaging fixes.
+
 ## [0.2.2](changelog/0.2.x/0.2.2.md) — 2026-10-25
 
 Preserve literal NPS text, links, images, and caller notices in Markdown responses.

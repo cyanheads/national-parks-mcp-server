@@ -1,6 +1,6 @@
 # national-parks-mcp-server - Directory Structure
 
-Generated on: 2026-10-28 12:03:23
+Generated on: 2026-10-28 12:17:27
 
 ```text
 national-parks-mcp-server/
@@ -26,6 +26,7 @@ national-parks-mcp-server/
 ├── changelog/
 │   ├── 0.1.x/
 │   ├── 0.2.x/
+│   ├── 0.3.x/
 │   └── template.md
 ├── docs/
 │   └── design.md
