@@ -2,8 +2,8 @@
 
 **Server:** national-parks-mcp-server
 **Version:** 0.3.0
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.18`
-**Engines:** Bun ≥1.4.0, Node ≥24.0.0
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.22`
+**Engines:** Bun ≥1.4.4, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/server` ^2.4.0 (protocol revisions 2026-07-28 and 2025-*)
 **Zod:** ^4.6.7
 
@@ -355,7 +355,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Bundling
 
-`npm run bundle` produces a `.mcpb` for Claude Desktop. `.mcpbignore` excludes repo-only paths with root-anchored patterns; root `skills/` ships. After `mcpb clean` prunes dev dependencies, `scripts/clean-mcpb.ts` strips dependency package-root agent trees and `SKILL.md` docs, platform-specific native bindings, node-gyp build output beside `binding.gyp`, and build-only framework/native package files. Runtime paths such as the SDK's `dist/ext/skills/` and compiled `*.node` addons remain. Keep `AGENT_DOC_ENTRY` in the cleaner and packaging lint aligned; `tests/scripts/packaging-agent-docs.test.ts` guards that boundary. MCPB is stdio-only.
+`npm run bundle` produces a `.mcpb` for Claude Desktop. `.mcpbignore` excludes repo-only paths with root-anchored patterns; root `skills/` ships. After `mcpb clean` prunes dev dependencies, `scripts/clean-mcpb.ts` strips dependency package-root agent trees and `AGENTS.md`/`CLAUDE.md`, `SKILL.md` anywhere, platform-specific native bindings, node-gyp build output beside `binding.gyp`, and build-only framework/native package files. Runtime paths such as the SDK's `dist/ext/skills/` and compiled `*.node` addons remain. Keep `AGENT_DOC_ENTRY` in the cleaner and packaging lint aligned; `tests/scripts/packaging-agent-docs.test.ts` guards that boundary. MCPB is stdio-only.
 
 **Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match, that every `user_config` option is wired into `mcp_config.env` as `"X": "${user_config.X}"` (the host substitutes nothing else — `"${X}"` reaches the server as that literal string), and that an optional string option carries `"default": ""`.
 

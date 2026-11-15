@@ -164,7 +164,7 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
-Requires [Bun v1.4](https://bun.sh/) or higher (or Node.js v24+) and an NPS Data API key.
+Requires [Bun v1.4.4](https://bun.sh/) or higher (or Node.js v24+) and an NPS Data API key.
 
 - **Clone and install:**
 
