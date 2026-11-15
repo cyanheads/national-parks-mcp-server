@@ -280,11 +280,11 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
   },
 });
 
+/** A count NPS published no value for reads unknown, never 0 — the same null
+ * `structuredContent` carries. */
 function siteSummary(c: NpsCampground): string {
-  const total = c.totalSites != null ? String(c.totalSites) : 'unknown';
-  const reservable = c.reservableSites ?? 0;
-  const firstCome = c.firstComeSites ?? 0;
-  return `${total} (${reservable} reservable, ${firstCome} first-come)`;
+  const count = (n: number | null) => (n === null ? 'unknown' : String(n));
+  return `${count(c.totalSites)} (${count(c.reservableSites)} reservable, ${count(c.firstComeSites)} first-come)`;
 }
 
 /** Explicit Yes/No per amenity — a camper filtering on "no RV" needs the No, too.

@@ -203,9 +203,10 @@ export const npsGetPark = tool('nps_get_park', {
     notice: { render: (value) => `> ${escapeMarkdownInline(String(value))}` },
     requestedCount: { label: 'Requested' },
     returnedCount: { label: 'Returned' },
+    // render owns the whole line (a label beside it is ignored), and the generic
+    // fallback would print the array as a JSON code literal.
     missingCodes: {
-      label: 'Unresolved codes',
-      render: (v) => escapeMarkdownInline((v as string[]).join(', ')),
+      render: (v) => `**Unresolved codes:** ${escapeMarkdownInline((v as string[]).join(', '))}`,
     },
   },
   errors: [

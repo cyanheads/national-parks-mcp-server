@@ -214,6 +214,33 @@ describe('nps_get_park', () => {
   });
 
   /* ----------------------------------------------------------------------- *
+   * #28 — the unresolved-codes trailer line names what it lists. Asserted on
+   * the assembled result: format() alone never sees the enrichment trailer.
+   * ----------------------------------------------------------------------- */
+
+  describe('unresolved-codes trailer', () => {
+    it('labels the unresolved codes in content[] and keeps missingCodes structured', async () => {
+      getParks.mockResolvedValueOnce([makeDetail({ parkCode: 'yose' })]);
+      const result = await runToolContract(npsGetPark, { parkCode: ['yose', 'xxxx', 'qqqq'] });
+
+      expect(result.isError).toBeFalsy();
+      expect((result.structuredContent as { missingCodes?: string[] }).missingCodes).toEqual([
+        'xxxx',
+        'qqqq',
+      ]);
+      expect(contentText(result as never)).toMatch(/^\*\*Unresolved codes:\*\* xxxx, qqqq$/m);
+    });
+
+    it('renders no unresolved-codes line when every code resolves', async () => {
+      getParks.mockResolvedValueOnce([makeDetail({ parkCode: 'yose' })]);
+      const result = await runToolContract(npsGetPark, { parkCode: ['yose'] });
+
+      expect(result.structuredContent).not.toHaveProperty('missingCodes');
+      expect(contentText(result as never)).not.toMatch(/Unresolved codes|xxxx/);
+    });
+  });
+
+  /* ----------------------------------------------------------------------- *
    * Park-detail normalization end to end — the real NpsService behind a
    * strict fetch fake, run through the tool's public contract.
    * ----------------------------------------------------------------------- */

@@ -349,7 +349,8 @@ enrichment: {
 enrichmentTrailer: {
   requestedCount: { label: 'Requested' },
   returnedCount: { label: 'Returned' },
-  missingCodes: { label: 'Unresolved codes', render: (v) => (v as string[]).join(', ') },
+  // render owns the whole line, label included; the generic fallback would print the array as JSON
+  missingCodes: { render: (v) => `**Unresolved codes:** ${(v as string[]).join(', ')}` },
 },
 ```
 - Cross-reference returned `parkCode`s against the request; any requested-but-absent → `missingCodes` + a notice ("Codes not found: …. Verify with nps_find_parks — codes are 4-letter lowercase like \"yose\".").
@@ -555,7 +556,7 @@ output: z.object({
 
 `rvAllowed` comes from `accessibility.rvAllowed` (`"1"`/`"0"`), `null` when empty.
 
-**`format()`:** per campground — `### {name}` · `**Park:** {parkCode} | **ID:** {id} | **Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` · description · `**Amenities:**` with an explicit value per amenity (`Potable water: Yes · Showers: No · … · Trash collection: Unknown` — `Unknown` for a `null` amenity, never `No`) · `**Fee:** ${fee}` · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `**Coordinates:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the RV-access/water amenities prominently.
+**`format()`:** per campground — `### {name}` · `**Park:** {parkCode} | **ID:** {id} | **Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` (a `null` count reads `unknown`, never `0`) · description · `**Amenities:**` with an explicit value per amenity (`Potable water: Yes · Showers: No · … · Trash collection: Unknown` — `Unknown` for a `null` amenity, never `No`) · `**Fee:** ${fee}` · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `**Coordinates:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the RV-access/water amenities prominently.
 
 ---
 

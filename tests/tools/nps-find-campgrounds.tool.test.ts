@@ -135,6 +135,50 @@ describe('nps_find_campgrounds', () => {
     expect(text).toMatch(/RV allowed: No/);
   });
 
+  it('renders a published zero site count as 0 on content[] (characterization)', async () => {
+    findCampgrounds.mockResolvedValueOnce({ total: 1, data: [makeCampground()] });
+    const result = await runToolContract(npsFindCampgrounds, { parkCode: 'zion' });
+
+    expect(
+      (result.structuredContent as { campgrounds: NpsCampground[] }).campgrounds[0],
+    ).toMatchObject({
+      totalSites: 176,
+      reservableSites: 176,
+      firstComeSites: 0,
+    });
+    expect(contentText(result as never)).toMatch(
+      /^\*\*Park:\*\* zion \| \*\*ID:\*\* c1 \| \*\*Sites:\*\* 176 \(176 reservable, 0 first-come\)$/m,
+    );
+  });
+
+  it('renders null site counts as unknown on content[], never 0 (#25)', async () => {
+    findCampgrounds.mockResolvedValueOnce({
+      total: 2,
+      data: [
+        makeCampground({ id: 'c1', reservableSites: null, firstComeSites: null }),
+        makeCampground({
+          id: 'c2',
+          totalSites: null,
+          reservableSites: 12,
+          firstComeSites: null,
+        }),
+      ],
+    });
+    const result = await runToolContract(npsFindCampgrounds, { parkCode: 'zion' });
+
+    const rows = (result.structuredContent as { campgrounds: NpsCampground[] }).campgrounds;
+    expect(rows[0]).toMatchObject({ totalSites: 176, reservableSites: null, firstComeSites: null });
+    expect(rows[1]).toMatchObject({ totalSites: null, reservableSites: 12, firstComeSites: null });
+    const text = contentText(result as never);
+    expect(text).toMatch(
+      /^\*\*Park:\*\* zion \| \*\*ID:\*\* c1 \| \*\*Sites:\*\* 176 \(unknown reservable, unknown first-come\)$/m,
+    );
+    expect(text).toMatch(
+      /^\*\*Park:\*\* zion \| \*\*ID:\*\* c2 \| \*\*Sites:\*\* unknown \(12 reservable, unknown first-come\)$/m,
+    );
+    expect(text).not.toMatch(/\b0 reservable|\b0 first-come/);
+  });
+
   it('format() renders an unknown amenity as Unknown, never No', () => {
     const blocks = npsFindCampgrounds.format!({
       campgrounds: [
