@@ -297,7 +297,7 @@ describe('upstream failure', () => {
     http.restore();
   });
 
-  it('exposes neither a url nor the API key on a 404', async () => {
+  it('exposes neither a url, the upstream body, nor the API key on a 404', async () => {
     const result = await run(npsFindParks, { query: 'yosemite', limit: 1 });
 
     // The fake saw the key where the service sends it — the header, never the URL.
@@ -311,6 +311,10 @@ describe('upstream failure', () => {
     expect(data.status).toBe(404);
     expect(Object.keys(data).length).toBeGreaterThan(0);
     expect(data).not.toHaveProperty('url');
+    // The captured error body stays server-side: neither envelope carries it.
+    expect(data).not.toHaveProperty('body');
+    expect(data).not.toHaveProperty('responseBody');
+    expect(JSON.stringify(result)).not.toContain('<html>');
     expect(JSON.stringify(result)).not.toContain(SENTINEL);
   });
 });
