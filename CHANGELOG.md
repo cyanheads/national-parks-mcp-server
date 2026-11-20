@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.2](changelog/0.3.x/0.3.2.md) — 2026-11-20
+
+Show seasonal hours and event cancellations, with campground details for planning a visit.
+
 ## [0.3.1](changelog/0.3.x/0.3.1.md) — 2026-11-14
 
 Label the unresolved-codes line in nps_get_park, render unknown campground site counts as unknown instead of 0, and adopt mcp-ts-core 0.13.22, which keeps upstream NPS error bodies out of error envelopes.
