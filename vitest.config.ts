@@ -1,5 +1,5 @@
 /**
- * @fileoverview Vitest config for the consumer server. Uses Vitest 4 `projects`
+ * @fileoverview Vitest config for the consumer server. Uses Vitest projects
  * so you can split suites (unit/smoke/integration/fuzz) and run each with
  * `--project <name>` as the surface grows. Extends the framework's base config
  * for shared `resolve`, `ssr`, and coverage settings.
@@ -17,6 +17,8 @@ export default mergeConfig(
   defineConfig({
     resolve: { alias },
     test: {
+      // Vitest's fork watchdog requires an IPC channel method Bun doesn't implement.
+      pool: 'threads',
       projects: [
         {
           extends: true,
