@@ -1,7 +1,7 @@
 /**
  * @fileoverview nps_get_activities — curated things to do and points of interest
  * at a park (backed by /thingstodo): title, description, duration, location,
- * accessibility, and fee/pet/reservation flags. Single-string parkCode/stateCode;
+ * accessibility, fees, pet rules, and reservation details. Single-string parkCode/stateCode;
  * at least one location filter is required.
  * @module mcp-server/tools/definitions/nps-get-activities.tool
  */
@@ -14,7 +14,7 @@ import { getNpsService } from '@/services/nps/nps-service.js';
 export const npsGetActivities = tool('nps_get_activities', {
   title: 'national-parks-mcp-server: get activities',
   description:
-    'Curated things to do and points of interest at a park — title, description, time commitment, location, accessibility, and fee/pet/reservation flags — answering "what should I do at Acadia?" Covers the NPS editorially-curated activity list (distinct from a park\'s raw activity tags in nps_get_park). Accepts a single 4-letter park code or a single two-letter state code, and at least one is required. Not every park has a curated list; an empty result is not an error.',
+    "Curated things to do and points of interest at a park — title, description, time commitment, location, accessibility, fees, pet rules, and reservation details. Covers the NPS editorially-curated activity list (distinct from a park's raw activity tags in nps_get_park). Accepts a single 4-letter park code or a single two-letter state code, and at least one is required. Not every park has a curated list; an empty result is not an error.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z
@@ -56,7 +56,9 @@ export const npsGetActivities = tool('nps_get_activities', {
             parkCode: z
               .string()
               .nullable()
-              .describe('Park code the activity belongs to, or null if absent.'),
+              .describe(
+                'Requested park code if listed for this activity, otherwise its first related park code, or null if unavailable.',
+              ),
             shortDescription: z.string().describe('Concise description of the activity.'),
             location: z
               .string()
@@ -75,13 +77,23 @@ export const npsGetActivities = tool('nps_get_activities', {
               .nullable()
               .describe('Time commitment (e.g. "1-3 Hours"), or null.'),
             reservationRequired: z.boolean().describe('Whether a reservation is required.'),
+            reservationDescription: z
+              .string()
+              .nullable()
+              .describe('Reservation or permit details as plain text, or null.'),
             feeDescription: z
               .string()
               .nullable()
               .describe(
                 'Fee info if any (free text), or null. Absence does not guarantee free — check the park page.',
               ),
-            petsPermitted: z.boolean().describe('Whether pets are permitted.'),
+            petsPermitted: z
+              .boolean()
+              .describe('Whether pets are permitted, subject to park rules.'),
+            petsDescription: z
+              .string()
+              .nullable()
+              .describe('Pet rules or restrictions as plain text, or null.'),
             accessibility: z
               .string()
               .nullable()
@@ -247,8 +259,12 @@ export const npsGetActivities = tool('nps_get_activities', {
       if (a.shortDescription) lines.push(escapeMarkdownInline(a.shortDescription));
       if (a.location) lines.push(`**Location:** ${escapeMarkdownInline(a.location)}`);
       lines.push(
-        `**Reservation required:** ${a.reservationRequired ? 'Yes' : 'No'} · **Pets:** ${a.petsPermitted ? 'OK' : 'Not permitted'}`,
+        `**Reservation required:** ${a.reservationRequired ? 'Yes' : 'No'} · **Pets:** ${a.petsPermitted ? 'Permitted subject to park rules' : 'Not permitted'}`,
       );
+      if (a.reservationDescription)
+        lines.push(`**Reservation details:** ${escapeMarkdownInline(a.reservationDescription)}`);
+      if (a.petsDescription)
+        lines.push(`**Pet rules:** ${escapeMarkdownInline(a.petsDescription)}`);
       lines.push(
         `**Fee:** ${escapeMarkdownInline(a.feeDescription ?? 'None listed (verify on the park page)')}`,
       );

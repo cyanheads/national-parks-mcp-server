@@ -1,6 +1,6 @@
 # national-parks-mcp-server - Directory Structure
 
-Generated on: 2026-10-28 12:17:27
+Generated on: 2026-11-20 22:31:25
 
 ```text
 national-parks-mcp-server/
@@ -149,15 +149,17 @@ national-parks-mcp-server/
 │   │   ├── resources/
 │   │   │   └── definitions/
 │   │   └── tools/
-│   │       └── definitions/
-│   │           ├── nps-find-campgrounds.tool.ts
-│   │           ├── nps-find-events.tool.ts
-│   │           ├── nps-find-parks.tool.ts
-│   │           ├── nps-get-activities.tool.ts
-│   │           ├── nps-get-alerts.tool.ts
-│   │           └── nps-get-park.tool.ts
+│   │       ├── definitions/
+│   │       │   ├── nps-find-campgrounds.tool.ts
+│   │       │   ├── nps-find-events.tool.ts
+│   │       │   ├── nps-find-parks.tool.ts
+│   │       │   ├── nps-get-activities.tool.ts
+│   │       │   ├── nps-get-alerts.tool.ts
+│   │       │   └── nps-get-park.tool.ts
+│   │       └── operating-hours.ts
 │   ├── services/
 │   │   └── nps/
+│   │       ├── normalize-operating-hours.ts
 │   │       ├── nps-service.ts
 │   │       └── types.ts
 │   └── index.ts

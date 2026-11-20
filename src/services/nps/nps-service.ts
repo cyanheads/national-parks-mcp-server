@@ -12,6 +12,7 @@ import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, serviceUnavailable, unauthorized } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type { ServerConfig } from '@/config/server-config.js';
+import { normalizeOperatingHours } from './normalize-operating-hours.js';
 import type {
   NpsAlert,
   NpsAlertRaw,
@@ -57,6 +58,12 @@ function toInt(value: string | undefined | null): number | null {
   if (value == null || value === '') return null;
   const n = Number.parseInt(value, 10);
   return Number.isNaN(n) ? null : n;
+}
+
+/** A published maximum length of zero represents an unspecified limit. */
+function positiveLength(value: string | undefined): number | null {
+  const length = toInt(value);
+  return length !== null && length > 0 ? length : null;
 }
 
 /** NPS boolean-flavored fields arrive as the strings "true"/"false" or "1"/"0". */
@@ -201,6 +208,20 @@ function plainText(value: string | undefined | null): string {
     : stripHtml(value);
 }
 
+/** Convert a published cancellation to ISO and reject impossible calendar dates. */
+function cancellationDate(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  let iso = value.trim();
+  const parts = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(iso);
+  if (parts) {
+    const [, month = '', day = '', year] = parts;
+    iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const date = new Date(iso);
+  return Number.isFinite(date.getTime()) && date.toISOString().startsWith(iso) ? iso : null;
+}
+
 /** Extract `.name` strings from NPS `[{id, name}]` arrays. */
 function names(items: { name?: string }[] | undefined): string[] {
   if (!Array.isArray(items)) return [];
@@ -322,7 +343,7 @@ export class NpsService {
     const env = await this.get<NpsStandardEnvelopeRaw<NpsThingToDoRaw>>('/thingstodo', query, ctx);
     return {
       total: toInt(env.total) ?? env.data?.length ?? 0,
-      data: (env.data ?? []).map((t) => this.normalizeThingToDo(t)),
+      data: (env.data ?? []).map((t) => this.normalizeThingToDo(t, params.parkCode)),
     };
   }
 
@@ -353,7 +374,7 @@ export class NpsService {
    * ----------------------------------------------------------------------- */
 
   private normalizeParkSummary(p: NpsParkRaw): NpsParkSummary {
-    const firstFee = p.entranceFees?.[0]?.cost;
+    const firstFee = p.entranceFees?.[0];
     return {
       parkCode: p.parkCode ?? '',
       fullName: p.fullName ?? p.name ?? '',
@@ -363,7 +384,8 @@ export class NpsService {
       latitude: toFloat(p.latitude),
       longitude: toFloat(p.longitude),
       activities: names(p.activities),
-      entranceFee: emptyToNull(firstFee),
+      entranceFee: emptyToNull(firstFee?.cost),
+      entranceFeeTitle: emptyToNull(firstFee?.title),
       url: p.url ?? '',
     };
   }
@@ -397,19 +419,7 @@ export class NpsService {
       detail.entrancePasses = mapFees(p.entrancePasses);
     }
     if (include('hours')) {
-      detail.operatingHours = (p.operatingHours ?? []).map((h) => ({
-        name: h.name ?? '',
-        description: h.description ?? '',
-        standardHours: {
-          monday: h.standardHours?.monday ?? '',
-          tuesday: h.standardHours?.tuesday ?? '',
-          wednesday: h.standardHours?.wednesday ?? '',
-          thursday: h.standardHours?.thursday ?? '',
-          friday: h.standardHours?.friday ?? '',
-          saturday: h.standardHours?.saturday ?? '',
-          sunday: h.standardHours?.sunday ?? '',
-        },
-      }));
+      detail.operatingHours = (p.operatingHours ?? []).map(normalizeOperatingHours);
     }
     if (include('contacts')) {
       detail.contacts = {
@@ -451,6 +461,7 @@ export class NpsService {
   }
 
   private normalizeCampground(c: NpsCampgroundRaw): NpsCampground {
+    const firstFee = c.fees?.[0];
     return {
       id: c.id ?? '',
       name: c.name ?? '',
@@ -463,7 +474,19 @@ export class NpsService {
       firstComeSites: toInt(c.numberOfSitesFirstComeFirstServe),
       reservationInfo: emptyToNull(c.reservationInfo),
       reservationUrl: emptyToNull(c.reservationUrl),
-      fee: emptyToNull(c.fees?.[0]?.cost),
+      fee: emptyToNull(firstFee?.cost),
+      feeTitle: emptyToNull(firstFee?.title),
+      operatingHours: (c.operatingHours ?? []).map(normalizeOperatingHours),
+      electricalHookupSites: toInt(c.campsites?.electricalHookups),
+      rvMaxLengthFt: positiveLength(c.accessibility?.rvMaxLength),
+      trailerMaxLengthFt: positiveLength(c.accessibility?.trailerMaxLength),
+      siteTypes: {
+        tentOnly: toInt(c.campsites?.tentOnly),
+        rvOnly: toInt(c.campsites?.rvOnly),
+        group: toInt(c.campsites?.group),
+        walkBoatTo: toInt(c.campsites?.walkBoatTo),
+        horse: toInt(c.campsites?.horse),
+      },
       amenities: {
         potableWater: classifyAmenity(c.amenities?.potableWater),
         showers: classifyAmenity(c.amenities?.showers),
@@ -477,19 +500,27 @@ export class NpsService {
     };
   }
 
-  private normalizeThingToDo(t: NpsThingToDoRaw): NpsThingToDo {
+  private normalizeThingToDo(
+    t: NpsThingToDoRaw,
+    requestedParkCode: string | undefined,
+  ): NpsThingToDo {
+    const relatedPark = requestedParkCode
+      ? t.relatedParks?.find((park) => park.parkCode === requestedParkCode)
+      : undefined;
     return {
       id: t.id ?? '',
       title: t.title ?? '',
-      parkCode: emptyToNull(t.relatedParks?.[0]?.parkCode),
+      parkCode: emptyToNull((relatedPark ?? t.relatedParks?.[0])?.parkCode),
       shortDescription: stripHtml(t.shortDescription),
       location: emptyToNull(t.location),
       latitude: toFloat(t.latitude),
       longitude: toFloat(t.longitude),
       duration: emptyToNull(t.duration),
       reservationRequired: toBool(t.isReservationRequired),
+      reservationDescription: emptyToNull(plainText(t.reservationDescription)),
       feeDescription: emptyToNull(stripHtml(t.feeDescription)),
       petsPermitted: toBool(t.arePetsPermitted),
+      petsDescription: emptyToNull(plainText(t.petsDescription)),
       accessibility: emptyToNull(stripHtml(t.accessibilityInformation)),
       season: Array.isArray(t.season)
         ? t.season.filter((s): s is string => typeof s === 'string')
@@ -504,14 +535,18 @@ export class NpsService {
    * `dates[]` as the remaining occurrences from today through `recurrencedateend`,
    * NOT scoped to the query window (measured — byte-identical across windows), so
    * exposing it raw would relabel out-of-window dates as matches. YYYY-MM-DD
-   * strings compare lexicographically = chronologically; with neither bound this
-   * reduces to the full remaining-occurrence list. `dateStart`/`dateEnd` stay the
-   * record's own anchor (a recurring series' first date) — the field #2 is about.
+   * strings compare chronologically. Subtract published cancellations before
+   * reporting occurrences. The record's own anchor dates stay intact.
    */
   private normalizeEvent(e: NpsEventRaw, dateStart?: string, dateEnd?: string): NpsEvent {
-    const occurrenceDates = (e.dates ?? []).filter(
-      (d) => (!dateStart || d >= dateStart) && (!dateEnd || d <= dateEnd),
-    );
+    const withinWindow = (date: string) =>
+      (!dateStart || date >= dateStart) && (!dateEnd || date <= dateEnd);
+    const cancellations = new Set<string>();
+    for (const value of e.cancelleddatelist ?? []) {
+      const date = cancellationDate(value);
+      if (date !== null && withinWindow(date)) cancellations.add(date);
+    }
+    const occurrenceDates = (e.dates ?? []).filter((d) => withinWindow(d) && !cancellations.has(d));
     return {
       id: e.id ?? e.eventid ?? '',
       title: e.title ?? '',
@@ -521,6 +556,7 @@ export class NpsService {
       dateStart: emptyToNull(e.datestart),
       dateEnd: emptyToNull(e.dateend),
       occurrenceDates,
+      cancelledDates: [...cancellations],
       isRecurring: toBool(e.isrecurring),
       times: (e.times ?? [])
         .filter((t) => t.timestart || t.timeend)
@@ -528,6 +564,8 @@ export class NpsService {
       category: emptyToNull(e.category),
       isFree: toBool(e.isfree),
       feeInfo: emptyToNull(e.feeinfo),
+      registrationRequired: toBoolOrNull(e.isregresrequired),
+      registrationInfo: emptyToNull(plainText(e.regresinfo)),
       registrationUrl: emptyToNull(e.regresurl),
       infoUrl: emptyToNull(e.infourl),
     };

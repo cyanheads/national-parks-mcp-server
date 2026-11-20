@@ -4,7 +4,7 @@ description: Build NPS visit plans with nps_* tools when a trip involves camping
 license: Apache-2.0
 metadata:
   author: "cyanheads"
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Scope
@@ -21,18 +21,18 @@ Carry the selected park's `parkCode` from `nps_find_parks` through the trip. Ale
 - Check the selected park's alerts before recommending access-dependent activities. Read the affected location and condition, not just the category; a filtered search cannot establish that the whole park is clear.
 - Check result notices and coverage before concluding something is absent. A partial result, an upstream warning, or an empty page beyond the matches cannot support that conclusion. An empty curated activity or event feed does not establish that the park offers nothing to do.
 - Verify date-specific availability through the campground's reservation source before calling a campsite available. Reservable and first-come counts describe inventory, not remaining sites.
-- Verify hookup requirements on the campground's linked page. RV permission, a dump station, and potable water do not establish an RV hookup.
-- Place a recurring event on the itinerary only when its returned occurrence dates include the visit date. A series anchor is not evidence of an occurrence that day; an empty occurrence list does not establish cancellation.
+- Compare the rig and trailer lengths with the published limits. Check the electrical-hookup count and confirm the specific site, amperage, water, and sewer requirements on the campground or booking page.
+- Use `occurrenceDates` to schedule a program and `cancelledDates` to identify a cancelled visit date. An empty occurrence list alone gives no reason for the absence.
 
 ## Workflows
 
 ### Camping feasibility
 
-Resolve the destination, then combine park access alerts with campground records. Compare the user's actual requirements against amenities, accessibility text, reservation guidance, and linked campground details. Keep unknown amenities unresolved. Present suitable candidates with their reservation links, separating facility suitability from availability for the requested dates.
+Resolve the destination, then compare park alerts and campground exceptions with the visit dates. An exception may list open hours during a primitive season or a named closure with unspecified weekday hours. Read its name, dates, and hours together. Match the rig and site requirements, then use the reservation source to check vacancies.
 
 ### A dated visit
 
-Combine park hours and fees with curated activities, then search scheduled events for the visit window. Curated activities suggest what to do; they are not scheduled ranger programs. Use event occurrence dates and time slots to place programs, and keep missing times unresolved. Check registration links before describing a program as ready to attend. Review alerts for conflicts with the proposed locations and activities.
+Read the dated exceptions for the entrance or area the visitor will use. Check which category a quoted fee covers and consult the activity’s pet and permit guidance. For scheduled programs, match the visit date and time, then check `registrationRequired` and the registration instructions even when there is no booking link. Review alerts for conflicts.
 
 ### Nearby destinations
 

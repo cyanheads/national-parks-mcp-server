@@ -37,9 +37,15 @@ function makeCampground(overrides?: Partial<NpsCampground>): NpsCampground {
     totalSites: 176,
     reservableSites: 176,
     firstComeSites: 0,
+    electricalHookupSites: null,
+    siteTypes: { tentOnly: null, rvOnly: null, group: null, walkBoatTo: null, horse: null },
+    rvMaxLengthFt: null,
+    trailerMaxLengthFt: null,
+    operatingHours: [],
     reservationInfo: 'Reserve at recreation.gov.',
     reservationUrl: 'https://recreation.gov',
     fee: '30.00',
+    feeTitle: null,
     amenities: {
       potableWater: true,
       showers: false,
@@ -74,6 +80,70 @@ describe('nps_find_campgrounds', () => {
     expect(getEnrichment(ctx).totalCount).toBe(1);
   });
 
+  it('preserves campground inventory, equipment limits, dated hours and the fee category on both surfaces', async () => {
+    const hours = {
+      monday: 'All Day',
+      tuesday: '',
+      wednesday: '',
+      thursday: '',
+      friday: '',
+      saturday: 'Closed',
+      sunday: '',
+    };
+    const operatingHours = [
+      {
+        name: 'Watchman',
+        description: 'Year round',
+        standardHours: hours,
+        exceptions: [
+          { name: 'Summer', startDate: '2026-06-01', endDate: '2026-09-01', hours },
+          { name: 'Winter', startDate: '2026-11-01', endDate: '2027-03-01', hours: null },
+        ],
+      },
+    ];
+    findCampgrounds.mockResolvedValueOnce({
+      total: 1,
+      data: [
+        {
+          ...makeCampground({ fee: null }),
+          feeTitle: 'Walk-in [group] *site*',
+          electricalHookupSites: 0,
+          rvMaxLengthFt: 40,
+          trailerMaxLengthFt: null,
+          siteTypes: { tentOnly: 18, rvOnly: 6, group: 6, walkBoatTo: 0, horse: null },
+          operatingHours,
+        },
+      ],
+    });
+    const result = await runToolContract(npsFindCampgrounds, { parkCode: 'zion' });
+
+    expect(result.structuredContent).toMatchObject({
+      campgrounds: [
+        {
+          fee: null,
+          feeTitle: 'Walk-in [group] *site*',
+          electricalHookupSites: 0,
+          rvMaxLengthFt: 40,
+          trailerMaxLengthFt: null,
+          siteTypes: { tentOnly: 18, rvOnly: 6, group: 6, walkBoatTo: 0, horse: null },
+          operatingHours,
+        },
+      ],
+    });
+    const text = contentText(result);
+    expect(text).toContain('Electrical hookup sites:** 0');
+    expect(text).toContain(
+      'Tent-only: 18 · RV-only: 6 · Group: 6 · Walk/boat-to: 0 · Horse: unknown',
+    );
+    expect(text).toContain('RV max length:** 40 ft');
+    expect(text).toContain('Trailer max length:** Unspecified');
+    expect(text).toContain('Summer (2026-06-01 to 2026-09-01)');
+    expect(text).toContain('Winter (2026-11-01 to 2027-03-01)');
+    expect(text).toContain('Hours unknown');
+    expect(text).toContain('Sat Closed');
+    expect(text).toContain('Unspecified · Walk-in \\[group\\] \\*site\\*');
+  });
+
   it('emits an empty-result notice rather than an error', async () => {
     findCampgrounds.mockResolvedValueOnce({ total: 0, data: [] });
     const input = npsFindCampgrounds.input.parse({ parkCode: 'aaaa' });
@@ -93,6 +163,18 @@ describe('nps_find_campgrounds', () => {
 
     expect(getEnrichment(ctx).truncated).toBe(true);
     expect(getEnrichment(ctx).cap).toBe(1);
+  });
+
+  it('returns an empty page and reset guidance when start is past the last campground', async () => {
+    findCampgrounds.mockResolvedValueOnce({ total: 2, data: [] });
+    const result = await runToolContract(npsFindCampgrounds, { parkCode: 'zion', start: 4 });
+
+    expect(result.structuredContent).toMatchObject({
+      campgrounds: [],
+      totalCount: 2,
+      notice: expect.stringContaining('start=0'),
+    });
+    expect(contentText(result)).toContain('Re-request with start=0');
   });
 
   it('handles a sparse campground (null counts, every amenity unknown)', async () => {

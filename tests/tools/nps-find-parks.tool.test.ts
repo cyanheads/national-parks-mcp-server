@@ -6,6 +6,7 @@
  */
 
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import MarkdownIt from 'markdown-it';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { npsFindParks } from '@/mcp-server/tools/definitions/nps-find-parks.tool.js';
 import type { NpsParkSummary } from '@/services/nps/types.js';
@@ -33,6 +34,7 @@ function makePark(overrides?: Partial<NpsParkSummary>): NpsParkSummary {
     longitude: -119.56,
     activities: ['Hiking', 'Camping'],
     entranceFee: '35.00',
+    entranceFeeTitle: null,
     url: 'https://www.nps.gov/yose/',
     ...overrides,
   };
@@ -56,6 +58,28 @@ describe('nps_find_parks', () => {
     expect(result.parks).toHaveLength(1);
     expect(result.parks[0]!.parkCode).toBe('yose');
     expect(getEnrichment(ctx).totalCount).toBe(1);
+  });
+
+  it('preserves the first entrance fee category even when its amount is missing or zero', async () => {
+    const title = 'Education [group] *pass*';
+    findParks.mockResolvedValueOnce({
+      total: 2,
+      data: [
+        { ...makePark(), entranceFee: null, entranceFeeTitle: title },
+        { ...makePark({ parkCode: 'grca' }), entranceFee: '0.00', entranceFeeTitle: title },
+      ],
+    });
+    const result = await runToolContract(npsFindParks, { stateCode: 'CA' });
+
+    expect(result.structuredContent).toMatchObject({
+      parks: [
+        { entranceFee: null, entranceFeeTitle: title },
+        { entranceFee: '0.00', entranceFeeTitle: title },
+      ],
+    });
+    const html = new MarkdownIt('commonmark').render(contentText(result));
+    expect(html).toContain('Unspecified · Education [group] *pass*');
+    expect(html).toContain('$0.00 · Education [group] *pass*');
   });
 
   it('leaves truncation fields unset when nothing was capped (avoids -32007)', async () => {

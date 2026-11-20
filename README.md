@@ -47,14 +47,14 @@ Plan a National Park Service trip: find a park, check alerts and closures, and b
 ### `nps_find_parks` <sub>tool</sub>
 
 - Free-text `query`, two-letter `stateCode` (or a comma-separated list such as `"WY,MT,ID"`), and an optional `activity` filter; `limit` 1–50 (default 10) with a `start` offset
-- Each park carries its `parkCode` plus designation, states, description, coordinates, headline activities, lowest entrance fee, and NPS page; exact `parkCode` or name matches rank first, and `totalCount` counts every match
+- Each result includes the park code, designation, states, description, coordinates, activities, NPS page, and the amount and title of the first entrance fee NPS lists. Exact code or name matches rank first. `totalCount` counts every match.
 
 ---
 
 ### `nps_get_park` <sub>tool</sub>
 
 - Up to **10** `parkCode`s per call; the optional `fields` selector (`activities`, `topics`, `fees`, `hours`, `contacts`, `directions`, `images`) trims the payload to the sections you need
-- Always returns name, designation, states, description, coordinates, weather overview, and NPS page; fees and passes by category, hours by area and season, contacts, and up to 5 images (`imagesTruncated` when the park has more)
+- Core fields include name, designation, states, description, coordinates, weather overview, and NPS page. Optional sections include fees and passes by category, weekly hours with dated exceptions for each area, contacts, and up to five images (`imagesTruncated` when more exist).
 - Codes that match no site come back as `missingCodes`; the call fails (`no_parks_found`) only when none resolve
 
 ---
@@ -70,21 +70,21 @@ Plan a National Park Service trip: find a park, check alerts and closures, and b
 ### `nps_find_campgrounds` <sub>tool</sub>
 
 - Filter by `parkCode`, `stateCode`, or free-text `query`; `limit` 1–50 (default 15) with a `start` offset
-- Per campground: amenities (potable water, showers, dump station, toilets, trash collection, RV access) as yes, no, or unknown; reservable, first-come, and total site counts; reservation guidance and booking URL; lowest fee, accessibility, coordinates, and NPS page
+- Each campground lists weekly and seasonal hours, amenities, reservable and first-come sites, site types, electrical-hookup counts, RV and trailer length limits, and its first-listed fee and title. Reservation guidance and the booking link cover the next step.
 
 ---
 
 ### `nps_get_activities` <sub>tool</sub>
 
 - A **single** `parkCode` or a **single** `stateCode` is required, plus an optional `query`; `limit` 1–50 (default 15) with a `start` offset
-- Per activity: title, short description, time commitment, location, coordinates, accessibility, season, reservation-required and pets-permitted flags, fee description, and NPS page
+- Each activity includes its location, season, duration, accessibility, fees, pet rules, and reservation or permit instructions. A shared activity carries the queried park code when NPS lists that park.
 
 ---
 
 ### `nps_find_events` <sub>tool</sub>
 
 - Filter by `parkCode`, `stateCode`, or `query` within a `dateStart` / `dateEnd` window (`YYYY-MM-DD`); pages by `pageNumber` and `pageSize` (1–50, default 15), not by offset
-- Per event: title, date range, `occurrenceDates` inside the window (`isRecurring` marks a series), time slots, location, category, fee, and registration and info URLs
+- Each event reports scheduled and cancelled dates within the window, series dates, time slots, location, category, fees, and registration instructions and links. A registration requirement can be present even when NPS supplies no URL.
 - Errors NPS reports alongside results fold into the notice instead of failing the call
 
 ## Features

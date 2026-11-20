@@ -1,7 +1,7 @@
 /**
  * @fileoverview nps_find_events — scheduled events at a park within a date range
  * (ranger programs, festivals, tours): title, dates/times, location, category,
- * fee, registration links. Backed by /events, which uses a distinct envelope and
+ * fee, cancellations, and registration details. Backed by /events, which uses a distinct envelope and
  * page-based pagination. A non-empty envelope errors[] folds into the notice.
  * @module mcp-server/tools/definitions/nps-find-events.tool
  */
@@ -14,7 +14,7 @@ import { getNpsService } from '@/services/nps/nps-service.js';
 export const npsFindEvents = tool('nps_find_events', {
   title: 'national-parks-mcp-server: find events',
   description:
-    'Scheduled events at a park within a date range — ranger programs, festivals, tours, interpretive events — answering "what\'s happening at Yellowstone this weekend?" with title, dates and times, location, category, fee, and registration links. Get park codes from nps_find_parks. Paginates by page number, not offset. Many parks list few or no events; an empty result is not an error.',
+    'Scheduled events at a park within a date range — ranger programs, festivals, tours, interpretive events — with dates and times, cancellations, location, category, fees, and registration details. Get park codes from nps_find_parks. Paginates by page number, not offset. Many parks list few or no events; an empty result is not an error.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z
@@ -81,23 +81,28 @@ export const npsFindEvents = tool('nps_find_events', {
               .string()
               .nullable()
               .describe(
-                'Event start date (YYYY-MM-DD), or null. For a recurring event this is the series anchor (its original first date), which can predate your requested window — use occurrenceDates for the dates that actually fall in the window.',
+                'Start date on the event record (YYYY-MM-DD), or null. For a recurring event this is the original series start. Use occurrenceDates for scheduled dates in the requested window.',
               ),
             dateEnd: z
               .string()
               .nullable()
               .describe(
-                'Event end date (YYYY-MM-DD), or null. For a recurring event this is the anchor date, not the last occurrence — see occurrenceDates and isRecurring.',
+                'End date on the event record (YYYY-MM-DD), or null. For a recurring event this is the anchor end date. Use occurrenceDates for scheduled dates in the requested window.',
               ),
             occurrenceDates: z
               .array(z.string())
               .describe(
-                'Dates (YYYY-MM-DD) the event actually occurs within the requested dateStart/dateEnd window; with no window, every remaining occurrence from today through the series end. Empty when the window matches no occurrence. For a recurring series, dateStart/dateEnd hold the series anchor instead.',
+                'Scheduled dates (YYYY-MM-DD) within the requested dateStart/dateEnd window, excluding published cancellations. With no window, includes all remaining scheduled dates. Empty when the window matches no occurrence. For a recurring series, dateStart/dateEnd hold the series anchor instead.',
+              ),
+            cancelledDates: z
+              .array(z.string())
+              .describe(
+                'Published cancellation dates (YYYY-MM-DD) within any requested date bounds. With neither bound, includes all listed cancellations, including past dates.',
               ),
             isRecurring: z
               .boolean()
               .describe(
-                'True when this is a recurring series (multiple occurrence dates); dateStart/dateEnd then hold the series anchor and occurrenceDates the actual dates.',
+                'True when NPS marks this as a recurring series. The series anchor remains in dateStart/dateEnd even when occurrenceDates is empty.',
               ),
             times: z
               .array(
@@ -120,13 +125,25 @@ export const npsFindEvents = tool('nps_find_events', {
               .string()
               .nullable()
               .describe('Fee details when not free (free text), or null.'),
+            registrationRequired: z
+              .boolean()
+              .nullable()
+              .describe(
+                'Whether registration or a reservation is required, or null if unspecified.',
+              ),
+            registrationInfo: z
+              .string()
+              .nullable()
+              .describe('Registration or reservation instructions as plain text, or null.'),
             registrationUrl: z
               .string()
               .nullable()
               .describe('Registration/reservation URL, or null.'),
             infoUrl: z.string().nullable().describe('More-info URL, or null.'),
           })
-          .describe('A single scheduled event with dates, times, and registration links.'),
+          .describe(
+            'A single event with scheduled dates, cancellations, and registration details.',
+          ),
       )
       .describe('Events matching the park/state and date window.'),
   }),
@@ -300,22 +317,34 @@ export const npsFindEvents = tool('nps_find_events', {
     const lines: string[] = [`## ${result.events.length} events`, ''];
     for (const e of result.events) {
       lines.push(`${/[\r\n]/.test(e.title) ? '' : '### '}${escapeMarkdownInline(e.title)}`);
+      const recordDates =
+        e.dateStart && e.dateEnd && e.dateStart !== e.dateEnd
+          ? `${e.dateStart}–${e.dateEnd}`
+          : (e.dateStart ?? e.dateEnd ?? 'Unspecified');
       lines.push(
-        `**ID:** ${escapeMarkdownInline(e.id)} | **When:** ${escapeMarkdownInline(whenLine(e.dateStart, e.dateEnd, e.times))}`,
+        `**ID:** ${escapeMarkdownInline(e.id)} | **${e.isRecurring ? 'Series anchor' : 'Record dates'}:** ${escapeMarkdownInline(recordDates)}`,
       );
-      if (e.isRecurring) {
-        lines.push(
-          e.occurrenceDates.length > 0
-            ? `**Recurring event** — occurrence dates: ${escapeMarkdownInline(e.occurrenceDates.join(', '))}`
-            : '**Recurring event** — no listed occurrences fall in the requested window; the date above is the series anchor, not an occurrence.',
-        );
+      if (e.isRecurring) lines.push('**Recurring event**');
+      lines.push(
+        `**Scheduled dates:** ${e.occurrenceDates.length > 0 ? escapeMarkdownInline(e.occurrenceDates.join(', ')) : 'None listed'}`,
+      );
+      if (e.times.length > 0) {
+        const slots = e.times.map((t) => `${t.timeStart}–${t.timeEnd}`).join(', ');
+        lines.push(`**Listed times:** ${escapeMarkdownInline(slots)}`);
       }
+      if (e.cancelledDates.length > 0)
+        lines.push(`**Cancelled dates:** ${escapeMarkdownInline(e.cancelledDates.join(', '))}`);
       if (e.location) lines.push(`**Where:** ${escapeMarkdownInline(e.location)}`);
       if (e.category) lines.push(`**Category:** ${escapeMarkdownInline(e.category)}`);
       if (e.parkCode) lines.push(`**Park:** ${escapeMarkdownInline(e.parkCode)}`);
       if (e.description) lines.push(escapeMarkdownInline(e.description));
       const feeLabel = e.isFree ? 'Free' : 'Not free';
       lines.push(`**Fee:** ${feeLabel}${e.feeInfo ? ` — ${escapeMarkdownInline(e.feeInfo)}` : ''}`);
+      const registrationLabel =
+        e.registrationRequired === null ? 'Unspecified' : e.registrationRequired ? 'Yes' : 'No';
+      lines.push(`**Registration required:** ${registrationLabel}`);
+      if (e.registrationInfo)
+        lines.push(`**Registration details:** ${escapeMarkdownInline(e.registrationInfo)}`);
       if (e.registrationUrl) lines.push(markdownLink('Register', e.registrationUrl));
       if (e.infoUrl) lines.push(markdownLink('Info', e.infoUrl));
       lines.push('');
@@ -323,19 +352,6 @@ export const npsFindEvents = tool('nps_find_events', {
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];
   },
 });
-
-function whenLine(
-  dateStart: string | null,
-  dateEnd: string | null,
-  times: { timeStart: string; timeEnd: string }[],
-): string {
-  const dateRange =
-    dateStart && dateEnd && dateStart !== dateEnd
-      ? `${dateStart}–${dateEnd}`
-      : (dateStart ?? dateEnd ?? 'date TBD');
-  const slots = times.map((t) => `${t.timeStart}–${t.timeEnd}`).join(', ');
-  return slots ? `${dateRange}, ${slots}` : dateRange;
-}
 
 /**
  * True when a YYYY-MM-DD string is a real calendar date. JS `Date` silently rolls

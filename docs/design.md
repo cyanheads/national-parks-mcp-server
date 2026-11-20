@@ -83,9 +83,9 @@ One service, init/accessor pattern (`initNpsService(config)` in `createApp().set
 - Each method wraps the **full** fetch+parse pipeline in `withRetry` from `/utils`. Base delay ~500ms (NPS is fast and rarely rate-limits); retry on 5xx/429/network only.
 - Use `fetchWithTimeout` (non-OK → `ServiceUnavailable`) and `httpErrorFromResponse(response, { service: 'nps' })` to map the upstream status table (401/403 → key problems, 429 → rate limit with `Retry-After`, 5xx → transient).
 - Detect the NPS error envelope explicitly: a `403` body of `{"error":{"code":"API_KEY_INVALID"|"API_KEY_MISSING",...}}` → a clear configuration-flavored `ServiceUnavailable`/`unauthorized` naming `NPS_API_KEY`, so a bad key fails loud and actionable rather than as a generic 403.
-- The NPS envelope returns counts as **strings** (`total`, `limit`, `start` are `"470"` etc.) — the service coerces them to numbers before returning to handlers. `/events` uses a different envelope (`pagenumber`, `pagesize`, `total`, and an `errors` array — no top-level `dates`) — normalize it to the same internal shape. Each event record carries its own `dates[]` (all remaining occurrences from today through `recurrencedateend`, **independent of the requested window** — see Decisions Log §16); `normalizeEvent` intersects it with `[dateStart, dateEnd]` into `occurrenceDates` and coerces `isrecurring` into `isRecurring`.
+- The NPS envelope returns counts as **strings** (`total`, `limit`, `start` are `"470"` etc.) — the service coerces them to numbers before returning to handlers. `/events` uses a different envelope (`pagenumber`, `pagesize`, `total`, and an `errors` array — no top-level `dates`) — normalize it to the same internal shape. Each event record lists remaining dates independently of the requested window. `normalizeEvent` subtracts the published cancellations, intersects scheduled and cancelled dates with the inclusive request bounds, and keeps the series anchor dates (see Decisions Log §16).
 - **Pervasive string-type fields** — the NPS API returns many numeric and boolean fields as strings: `latitude`/`longitude` (parks, campgrounds, thingstodo), site counts (`numberOfSitesReservable`, `numberOfSitesFirstComeFirstServe`, `campsites.totalSites`), and boolean-flavored fields (`isReservationRequired`, `arePetsPermitted`, `isfree`, `isallday`, `rvAllowed` in accessibility). The service layer coerces all of these: numbers via `parseFloat`/`parseInt` (empty string → `null`); booleans via `=== 'true'` or `=== '1'`. Empty-string normalization to `null` also applies to `url` in alerts and string fields in events (`feeinfo`, `regresurl`, `infourl`).
-- **Field extraction quirks**: Activities in parks (`activities`, `topics`) are arrays of `{id, name}` objects — extract `.name`. The `/thingstodo` endpoint has no top-level `parkCode` — extract from `relatedParks[0].parkCode`. The `/events` endpoint uses `sitecode` (not `parkCode`) for the park identifier. Alert `lastIndexedDate` format is `"YYYY-MM-DD 00:00:00.0"` — strip to `"YYYY-MM-DD"`. Campground `totalSites` is in the nested `campsites.totalSites` object, not top-level.
+- **Field extraction quirks**: Activities in parks (`activities`, `topics`) are arrays of `{id, name}` objects — extract `.name`. The `/thingstodo` endpoint has no top-level `parkCode` — choose the requested code when it appears in `relatedParks`, otherwise the first listed code. The `/events` endpoint uses `sitecode` (not `parkCode`) for the park identifier. Alert `lastIndexedDate` format is `"YYYY-MM-DD 00:00:00.0"` — strip to `"YYYY-MM-DD"`. Campground `totalSites` is in the nested `campsites.totalSites` object, not top-level.
 
 ---
 
@@ -193,7 +193,8 @@ output: z.object({
         latitude: z.number().nullable().describe('Center latitude (decimal degrees), or null if the park record has no coordinates.'),
         longitude: z.number().nullable().describe('Center longitude (decimal degrees), or null if absent. Same string→float coercion as latitude.'),
         activities: z.array(z.string()).describe('Activity names available at the park (e.g. "Hiking", "Camping"). NPS returns activities as [{id, name}] objects — the service extracts the name strings. May be empty.'),
-        entranceFee: z.string().nullable().describe('Lowest standard entrance fee as a dollar string (e.g. "35.00"), or null if the park is fee-free or lists no fee. Derived by the service from `entranceFees[0].cost` (the first fee entry, typically the per-vehicle fee). Full fee/pass breakdown is in nps_get_park.'),
+        entranceFee: z.string().nullable().describe('Amount of the first NPS entrance fee in dollars. See nps_get_park for all categories.'),
+        entranceFeeTitle: z.string().nullable().describe('Title of that same fee entry, when supplied.'),
         url: z.string().describe('Park\'s official NPS.gov page, with fuller detail than this summary.'),
       }),
     )
@@ -230,7 +231,7 @@ enrichmentTrailer: {
 
 Empty matches are **not** an error — return `parks: []` + the notice. (Upstream key/5xx failures bubble from the service as baseline `ServiceUnavailable`.)
 
-**`format()`:** `## N parks` heading, then per park a block — `### {fullName}` · `**parkCode:** {parkCode} | **{designation}** | **States:** {states}` · description · `**Activities:** …` (the full list — text and structured must agree, see Decisions Log §15) · `**Entrance fee:** ${entranceFee}` or "Fee-free / see park page" · `**Coordinates:** {lat}, {lon}` when present · `[NPS page]({url})`. Empty → a line pointing at the enrichment notice.
+**`format()`:** `## N parks` heading, then per park a block — `### {fullName}` · `**parkCode:** {parkCode} | **{designation}** | **States:** {states}` · description · `**Activities:** …` (the full list — text and structured must agree, see Decisions Log §15) · the first-listed entrance fee and its title, with an unspecified amount identified as such · `**Coordinates:** {lat}, {lon}` when present · `[NPS page]({url})`. Empty → a line pointing at the enrichment notice.
 
 ---
 
@@ -294,22 +295,8 @@ output: z.object({
           }))
           .optional()
           .describe('Annual/park-specific passes (included unless fields excludes "fees"). May be empty.'),
-        operatingHours: z
-          .array(z.object({
-            name: z.string().describe('Schedule name (e.g. "Yosemite Valley").'),
-            description: z.string().describe('Free-text hours/seasonality notes.'),
-            standardHours: z.object({
-              monday: z.string().describe('Monday hours (e.g. "All Day", "Closed", "9:00AM - 5:00PM").'),
-              tuesday: z.string().describe('Tuesday hours.'),
-              wednesday: z.string().describe('Wednesday hours.'),
-              thursday: z.string().describe('Thursday hours.'),
-              friday: z.string().describe('Friday hours.'),
-              saturday: z.string().describe('Saturday hours.'),
-              sunday: z.string().describe('Sunday hours.'),
-            }).describe('Per-weekday operating hours. Values are free-text strings from NPS.'),
-          }))
-          .optional()
-          .describe('Operating hours by area/season (included unless fields excludes "hours"). May be empty.'),
+        // The shared schema includes the area's standard weekday hours and every dated exception.
+        operatingHours: operatingHours.optional().describe('Included when the hours section is selected.'),
         contacts: z
           .object({
             phoneNumbers: z.array(z.object({
@@ -469,7 +456,7 @@ Empty results are never an error.
 
 ### `nps_find_campgrounds`
 
-**Purpose:** Campgrounds at a park: amenities (RV access, potable water, showers, dump station), reservable vs. first-come site counts, reservation info, accessibility, and fees. Hookup requirements and date-specific availability need verification on the linked campground and reservation pages.
+**Purpose:** Campgrounds at a park: amenities (RV access, potable water, showers, dump station), reservable vs. first-come site counts, reservation info, accessibility, and fees. Published schedules, electrical site counts, and length limits inform site selection. The reservation source supplies date-specific availability.
 
 **Endpoint:** `GET /campgrounds` with `parkCode`, `stateCode`, `q`, `limit`, `start`.
 
@@ -521,7 +508,18 @@ output: z.object({
         firstComeSites: z.number().nullable().describe('Number of first-come-first-served sites (from top-level `numberOfSitesFirstComeFirstServe`, returned as string — service coerces), or null.'),
         reservationInfo: z.string().nullable().describe('Free-text reservation guidance (how/where to book), or null.'),
         reservationUrl: z.string().nullable().describe('Booking URL (often recreation.gov), or null.'),
-        fee: z.string().nullable().describe('Lowest campground fee as a dollar string (e.g. "30.00"), or null if free / unspecified.'),
+        fee: z.string().nullable().describe('Amount of the first NPS campground fee in dollars.'),
+        feeTitle: z.string().nullable().describe('Title of that same fee entry, when supplied.'),
+        // Same weekly hours and dated exceptions as park detail.
+        operatingHours,
+        electricalHookupSites: z.number().nullable(),
+        rvMaxLengthFt: z.number().nullable(),
+        trailerMaxLengthFt: z.number().nullable(),
+        // Counts may overlap. Each count is null when unspecified.
+        siteTypes: z.object({
+          tentOnly: z.number().nullable(), rvOnly: z.number().nullable(), group: z.number().nullable(),
+          walkBoatTo: z.number().nullable(), horse: z.number().nullable(),
+        }),
         amenities: z.object({
           potableWater: z.boolean().nullable().describe('Drinking water available on site, or null when NPS published no value.'),
           showers: z.boolean().nullable().describe('Showers available, or null when NPS published no value.'),
@@ -556,7 +554,7 @@ output: z.object({
 
 `rvAllowed` comes from `accessibility.rvAllowed` (`"1"`/`"0"`), `null` when empty.
 
-**`format()`:** per campground — `### {name}` · `**Park:** {parkCode} | **ID:** {id} | **Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` (a `null` count reads `unknown`, never `0`) · description · `**Amenities:**` with an explicit value per amenity (`Potable water: Yes · Showers: No · … · Trash collection: Unknown` — `Unknown` for a `null` amenity, never `No`) · `**Fee:** ${fee}` · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `**Coordinates:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the RV-access/water amenities prominently.
+**`format()`:** per campground — `### {name}` · `**Park:** {parkCode} | **ID:** {id} | **Sites:** {totalSites} ({reservableSites} reservable, {firstComeSites} first-come)` (a `null` count reads `unknown`, never `0`) · description · `**Amenities:**` with an explicit value per amenity (`Potable water: Yes · Showers: No · … · Trash collection: Unknown` — `Unknown` for a `null` amenity, never `No`) · weekly hours and dated exceptions · hookup and site-type counts · RV and trailer length limits · first-listed fee with title · `**Reservations:** {reservationInfo}` + `[Book]({reservationUrl})` · `**Accessibility:** …` · `**Coordinates:** …` · `[Campground page]({url})`. Surface the reservable/first-come split and the RV-access/water amenities prominently.
 
 ---
 
@@ -605,7 +603,7 @@ output: z.object({
       z.object({
         id: z.string().describe('Activity ID.'),
         title: z.string().describe('Activity title (e.g. "Watch the Sunrise from Cadillac Mountain").'),
-        parkCode: z.string().nullable().describe('Park code the activity belongs to, extracted from `relatedParks[0].parkCode`, or null if relatedParks is empty. The /thingstodo endpoint does not include a top-level parkCode field.'),
+        parkCode: z.string().nullable().describe('Requested park when listed on this activity, otherwise its first related park. Null if unavailable.'),
         shortDescription: z.string().describe('Concise description of the activity.'),
         location: z.string().nullable().describe('Where in the park this happens (free text), or null/empty.'),
         latitude: z.number().nullable().describe('Activity latitude (decimal degrees) or null. NPS returns as string — service coerces (empty string → null).'),
@@ -614,6 +612,8 @@ output: z.object({
         reservationRequired: z.boolean().describe('Whether a reservation is required. NPS returns `isReservationRequired` as the string "true"/"false" — service coerces to boolean.'),
         feeDescription: z.string().nullable().describe('Fee info if any (free text from `feeDescription`), or null. May contain HTML links — service strips HTML. Absence does not guarantee free — check the park page.'),
         petsPermitted: z.boolean().describe('Whether pets are permitted. NPS returns `arePetsPermitted` as the string "true"/"false" — service coerces to boolean.'),
+        petsDescription: z.string().nullable().describe('Published pet conditions and restrictions.'),
+        reservationDescription: z.string().nullable().describe('Published reservation or permit instructions.'),
         accessibility: z.string().nullable().describe('Accessibility information (`accessibilityInformation` field, free text), or null/empty.'),
         season: z.array(z.string()).describe('Seasons when the activity is available (e.g. ["Summer", "Fall"]). May be empty.'),
         url: z.string().nullable().describe('Activity\'s NPS.gov page, or null/empty — service normalizes empty string to null.'),
@@ -635,7 +635,7 @@ output: z.object({
 
 (`/thingstodo` returns a large undifferentiated list with no filter; require one to keep results meaningful. Code format is checked in the handler, after `missing_filter`, so a malformed code gets its declared reason and recovery — Decisions Log §17.)
 
-**`format()`:** per activity — `### {title}` · `**Duration:** {duration} | **Season:** {season}` · shortDescription · `**Location:** {location}` · flags line ("Reservation required · Pets OK · Fee: {feeDescription}") · `**Accessibility:** …` · `[Details]({url})`.
+**`format()`:** per activity — `### {title}` · `**Duration:** {duration} | **Season:** {season}` · shortDescription · `**Location:** {location}` · pet permission and conditions · reservation requirement and instructions · fee details · `**Accessibility:** …` · `[Details]({url})`.
 
 ---
 
@@ -698,6 +698,7 @@ output: z.object({
         dateStart: z.string().nullable().describe('Event start date (YYYY-MM-DD, from `datestart`), or null. For a recurring event this is the series anchor, which can predate the requested window — use occurrenceDates.'),
         dateEnd: z.string().nullable().describe('Event end date (YYYY-MM-DD, from `dateend`), or null. For a recurring event this is the anchor, not the last occurrence.'),
         occurrenceDates: z.array(z.string()).describe('Dates (YYYY-MM-DD) the event actually occurs within the requested dateStart/dateEnd window; with no window, every remaining occurrence from today through the series end. Empty when the window matches no occurrence. For a recurring series, dateStart/dateEnd hold the series anchor instead.'),
+        cancelledDates: z.array(z.string()).describe('Reported cancellation dates inside the requested bounds, including dates absent from the schedule.'),
         isRecurring: z.boolean().describe('True when this is a recurring series (multiple occurrence dates); dateStart/dateEnd then hold the series anchor and occurrenceDates the actual dates.'),
         times: z.array(z.object({
           timeStart: z.string().describe('Start time (e.g. "02:00 PM").'),
@@ -706,6 +707,8 @@ output: z.object({
         category: z.string().nullable().describe('Event category (e.g. "Regular Event", "Ranger Programs"), or null. Sourced from the `category` field (not `categoryid`).'),
         isFree: z.boolean().describe('Whether the event is free. NPS returns `isfree` as the string "true"/"false" — service coerces to boolean.'),
         feeInfo: z.string().nullable().describe('Fee details when not free (`feeinfo`, free text), or null/empty — service normalizes empty to null.'),
+        registrationRequired: z.boolean().nullable().describe('Whether registration is required, or null if unspecified.'),
+        registrationInfo: z.string().nullable().describe('Registration details, including onsite arrangements when there is no URL.'),
         registrationUrl: z.string().nullable().describe('Registration/reservation URL (`regresurl`), or null/empty — service normalizes empty to null.'),
         infoUrl: z.string().nullable().describe('More-info URL (`infourl`), or null/empty — service normalizes empty to null.'),
       }),
@@ -724,7 +727,7 @@ output: z.object({
 | `invalid_park_code` | `ValidationError` | A `parkCode` token isn't 4 lowercase letters | `Provide 4-letter lowercase park codes (e.g. "yell"), comma-separated. Look them up with nps_find_parks.` |
 | `invalid_state_code` | `ValidationError` | A `stateCode` token isn't two letters | `Provide two-letter state codes (e.g. "WY"), comma-separated.` |
 
-**`format()`:** per event — `### {title}` · `**When:** {dateStart}–{dateEnd}, {times}` · `**Where:** {location}` · `**Category:** {category}` · description · `**Fee:** Free` / `{feeInfo}` · `[Register]({registrationUrl})` · `[Info]({infoUrl})`. Lead with the date/time so weekend-planning is scannable.
+**`format()`:** per event — `### {title}` · series dates · scheduled and cancelled dates · times · `**Where:** {location}` · `**Category:** {category}` · description · `**Fee:** Free` / `{feeInfo}` · registration requirement and instructions · `[Register]({registrationUrl})` · `[Info]({infoUrl})`. Lead with the date/time so weekend-planning is scannable.
 
 ---
 
@@ -831,7 +834,7 @@ Each step is independently testable.
 
 15. **`format()` and `structuredContent` must agree on what data exists — no silent head-caps.** Two tools diverged the surfaces. `nps_find_parks.formatActivities()` rendered `activities.slice(0, 8)` + "+ N more" in text while `structuredContent.parks[].activities` carried the full array (measured 2026-07-16: `yell` returns 53 activities, of which text showed 8) — `content[]`-only clients (Claude Desktop) silently saw fewer than `structuredContent` clients (Claude Code). Fix: render the complete list in both channels. `nps_get_park.format()` rendered only `images[0]` while `structuredContent` carried up to 5, and the service caps the upstream list at `MAX_IMAGES_PER_PARK = 5` with no disclosure (measured: `yose` 12 images upstream, `acad` 12, `yell` 11 — all silently trimmed to 5, then to 1 in text). Fix: (a) render every returned image in `content[]`, and (b) add a per-park `imagesTruncated` boolean, set by `normalizeParkDetail()` when the upstream count exceeds the cap — the park `url` is already the "see the rest" path, so a boolean is the whole honest contract (no image-pagination or selector surface warranted). Raising the 5-cap itself is a separate, deliberately-unchanged question; this decision is about parity and disclosure. Additive output field, backward-compatible — patch-level.
 
-16. **`nps_find_events` exposes window-intersected `occurrenceDates` + `isRecurring`; the raw `dates[]` is not the matched set (#2).** A date-window query returned recurring events rendered at their *series anchor* (`datestart`/`dateend`), so a July window could show May dates. Measured live 2026-07-16: each event's `dates[]` is "all remaining occurrences from today through `recurrencedateend`," **byte-identical across different requested windows** (`eventid 134460` returned the same 73 entries for an August window, a September window, and no filter) — NPS's `dateStart`/`dateEnd` filter which *events* appear, never each event's own `dates[]`. So exposing raw `dates[]` as "matched dates" would relabel a *different* piece of misleading data (a past or narrow window would intersect none of it). The service intersects `dates[]` with `[dateStart, dateEnd]` locally into `occurrenceDates` (reducing to the full remaining list when no window is requested) and surfaces the dropped `isrecurring` as `isRecurring`, so the anchor-vs-occurrence divergence is explained rather than dumped. `dateStart`/`dateEnd` keep their source mapping; additive output fields — backward-compatible, patch-level.
+16. **Separate series dates, scheduled occurrences, and cancellations (#2, #31).** NPS uses the date window to select event records. Each record can still list dates outside that window and include the same date in both `dates` and `cancelleddatelist`. Convert the cancellation list to ISO dates, subtract it from `dates`, then apply the caller’s inclusive bounds to each list. Keep a cancellation-only event and its original series anchors so a visitor can tell what happened on the requested date.
 
 17. **Code format and date validity are validated in the handler, never with a schema `.regex()`/`.refine()`, so every malformed code or date gets its declared reason and recovery (#3, #8, #12).** Arguments are parsed before the handler runs, so a schema rejection reaches the client as `-32602` with the framework-owned reason `invalid_arguments` and a hint synthesized from the Zod issue. For a `.regex()` that hint only restates the pattern (`Invalid string: must match pattern /^[a-z]{4}$/`), never the tool's "look it up with nps_find_parks" guidance, and no tool-declared reason can ride a rejection the handler never saw. A custom `.regex()` message would put better text in that hint but keep `-32602`/`invalid_arguments`, so the six tools would answer the same bad `parkCode` with two codes and `nps_find_events` would split one date field between `invalid_arguments` (shape) and `invalid_date` (calendar); rejected. So on all six tools the `parkCode`/`stateCode` fields and `nps_find_events`' `dateStart`/`dateEnd` are plain `z.string()` with the format stated in `.describe()`, and each handler throws `ctx.fail(reason, message, ctx.recoveryFor(reason))` before any upstream call: `invalid_park_code` / `invalid_state_code` (`-32007`) on every tool that takes the field, and `invalid_date` for a non-`YYYY-MM-DD` value, then for an impossible calendar date (`2026-02-31`, via a `Date.UTC` round trip, before NPS would 400), then for `dateEnd` < `dateStart`. `nps_get_park` checks each array element and names only the malformed codes; its `.min(1)/.max(10)` stay on the schema. `nps_get_activities`' recovery asks for one code, since `/thingstodo` takes a single value. An empty string from a form client counts as omitted, so `nps_get_activities` answers `{ parkCode: "" }` with `missing_filter`. Dropping the pattern loosens the advertised `inputSchema` and moves those rejections from `-32602` to `-32007`.
 
@@ -858,13 +861,13 @@ All changes were verified against live API responses (a valid key confirmed work
 4. **`totalSites` is in `campsites.totalSites` nested object, not top-level** — design referenced it as top-level. Corrected with explicit extraction path. `campsites.totalSites` is also a string and needs `parseInt` coercion.
 5. **`numberOfSitesReservable`/`numberOfSitesFirstComeFirstServe` are strings** — added coercion notes.
 6. **Activities and topics in parks are `{id, name}` objects**, not name strings — added note that service extracts `.name`.
-7. **`/thingstodo` has no top-level `parkCode` field** — it's in `relatedParks[0].parkCode`. Output field changed to `z.string().nullable()` with extraction note.
+7. **Activity attribution comes from `relatedParks`.** Prefer the requested park when present. For state-only queries or an unmatched code, use the first related park. An empty list yields null.
 8. **`isReservationRequired` and `arePetsPermitted` are strings `"true"`/`"false"`**, not booleans — added coercion notes.
 9. **`isfree` and `isallday` in `/events` are strings**, not booleans — added coercion notes.
 10. **Events `parkCode` field does not exist** — the identifier is `sitecode`. Output field description updated.
 11. **`duration` vs `durationDescription`**: `durationDescription` is frequently empty; `duration` carries the actual time commitment (e.g. `"1-3 Hours"`). Design used the wrong field name. Fixed.
 12. **Campground `accessibility` is a dict object**, not a string — service must extract `accessibility.adaInfo` as the free-text summary. Schema description corrected.
-13. **Campground `rvHookups` boolean renamed to `rvAllowed`** — source is `accessibility.rvAllowed` (`"1"/"0"` → bool), not an amenities hookup field. The amenities object has no explicit hookup field; RV info lives in `accessibility`.
+13. **RV access, electrical hookups, and equipment size have separate sources.** `accessibility.rvAllowed` records permission. `campsites.electricalHookups` counts sites with electrical hookups, including an explicit zero. The RV and trailer limits come from `accessibility`; NPS can publish zero even where RVs are allowed, so expose a positive limit in feet or null.
 
 #### Data shape bugs (would produce wrong or empty output)
 

@@ -66,10 +66,21 @@ export interface NpsEntranceFeeRaw {
   title?: string;
 }
 
+export type NpsWeekdayHours = Record<
+  'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday',
+  string
+>;
+
 export interface NpsOperatingHoursRaw {
   description?: string;
+  exceptions?: {
+    name?: string;
+    startDate?: string;
+    endDate?: string;
+    exceptionHours?: Partial<NpsWeekdayHours>;
+  }[];
   name?: string;
-  standardHours?: Partial<Record<string, string>>;
+  standardHours?: Partial<NpsWeekdayHours>;
 }
 
 export interface NpsImageRaw {
@@ -118,6 +129,8 @@ export interface NpsCampgroundRaw {
   accessibility?: {
     adaInfo?: string;
     rvAllowed?: string;
+    rvMaxLength?: string;
+    trailerMaxLength?: string;
   };
   amenities?: {
     potableWater?: string[];
@@ -126,15 +139,24 @@ export interface NpsCampgroundRaw {
     dumpStation?: string;
     trashRecyclingCollection?: string;
   };
-  campsites?: { totalSites?: string };
+  campsites?: {
+    electricalHookups?: string;
+    group?: string;
+    horse?: string;
+    rvOnly?: string;
+    tentOnly?: string;
+    totalSites?: string;
+    walkBoatTo?: string;
+  };
   description?: string;
-  fees?: { cost?: string; title?: string; description?: string }[];
+  fees?: NpsEntranceFeeRaw[];
   id?: string;
   latitude?: string;
   longitude?: string;
   name?: string;
   numberOfSitesFirstComeFirstServe?: string;
   numberOfSitesReservable?: string;
+  operatingHours?: NpsOperatingHoursRaw[];
   parkCode?: string;
   reservationInfo?: string;
   reservationUrl?: string;
@@ -152,7 +174,9 @@ export interface NpsThingToDoRaw {
   latitude?: string;
   location?: string;
   longitude?: string;
+  petsDescription?: string;
   relatedParks?: { parkCode?: string }[];
+  reservationDescription?: string;
   season?: string[];
   shortDescription?: string;
   title?: string;
@@ -160,6 +184,7 @@ export interface NpsThingToDoRaw {
 }
 
 export interface NpsEventRaw {
+  cancelleddatelist?: (string | null)[];
   category?: string;
   dateend?: string;
   /** Every occurrence date (YYYY-MM-DD) NPS still lists — from today through
@@ -174,7 +199,9 @@ export interface NpsEventRaw {
   isfree?: string;
   /** "true"/"false" — whether this event is a recurring series. */
   isrecurring?: string;
+  isregresrequired?: string;
   location?: string;
+  regresinfo?: string;
   regresurl?: string;
   sitecode?: string;
   times?: {
@@ -217,6 +244,7 @@ export interface NpsParkSummary {
   description: string;
   designation: string;
   entranceFee: string | null;
+  entranceFeeTitle: string | null;
   fullName: string;
   latitude: number | null;
   longitude: number | null;
@@ -233,16 +261,14 @@ export interface NpsFeeEntry {
 
 export interface NpsOperatingHours {
   description: string;
+  exceptions: {
+    name: string;
+    startDate: string;
+    endDate: string;
+    hours: NpsWeekdayHours | null;
+  }[];
   name: string;
-  standardHours: {
-    monday: string;
-    tuesday: string;
-    wednesday: string;
-    thursday: string;
-    friday: string;
-    saturday: string;
-    sunday: string;
-  };
+  standardHours: NpsWeekdayHours;
 }
 
 export interface NpsParkImage {
@@ -316,17 +342,29 @@ export interface NpsCampground {
   accessibility: string | null;
   amenities: NpsCampgroundAmenities;
   description: string;
+  electricalHookupSites: number | null;
   fee: string | null;
+  feeTitle: string | null;
   firstComeSites: number | null;
   id: string;
   latitude: number | null;
   longitude: number | null;
   name: string;
+  operatingHours: NpsOperatingHours[];
   parkCode: string;
   reservableSites: number | null;
   reservationInfo: string | null;
   reservationUrl: string | null;
+  rvMaxLengthFt: number | null;
+  siteTypes: {
+    tentOnly: number | null;
+    rvOnly: number | null;
+    group: number | null;
+    walkBoatTo: number | null;
+    horse: number | null;
+  };
   totalSites: number | null;
+  trailerMaxLengthFt: number | null;
   url: string | null;
 }
 
@@ -339,7 +377,9 @@ export interface NpsThingToDo {
   location: string | null;
   longitude: number | null;
   parkCode: string | null;
+  petsDescription: string | null;
   petsPermitted: boolean;
+  reservationDescription: string | null;
   reservationRequired: boolean;
   season: string[];
   shortDescription: string;
@@ -353,6 +393,7 @@ export interface NpsEventTime {
 }
 
 export interface NpsEvent {
+  cancelledDates: string[];
   category: string | null;
   dateEnd: string | null;
   dateStart: string | null;
@@ -368,6 +409,8 @@ export interface NpsEvent {
    * remaining occurrences when no window was requested. See NpsService.normalizeEvent. */
   occurrenceDates: string[];
   parkCode: string | null;
+  registrationInfo: string | null;
+  registrationRequired: boolean | null;
   registrationUrl: string | null;
   times: NpsEventTime[];
   title: string;

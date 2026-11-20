@@ -237,9 +237,11 @@ src/
     server-config.ts                    # NPS_API_KEY / NPS_BASE_URL (Zod schema)
   services/
     nps/
-      nps-service.ts                    # NPS Data API client — retry boundary, error-envelope detection, all normalization
+      nps-service.ts                    # NPS API client, retry boundary, record normalization
+      normalize-operating-hours.ts      # Weekly hours and dated exceptions for parks and campgrounds
       types.ts                          # Raw upstream + normalized domain types
   mcp-server/
+    tools/operating-hours.ts            # Shared schedule schema and text rendering
     tools/definitions/
       nps-find-parks.tool.ts            # The parkCode-resolving entry point
       nps-get-park.tool.ts              # Batched full detail (≤10 codes/call)

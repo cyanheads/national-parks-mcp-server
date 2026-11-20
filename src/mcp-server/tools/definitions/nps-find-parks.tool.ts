@@ -110,8 +110,12 @@ export const npsFindParks = tool('nps_find_parks', {
               .string()
               .nullable()
               .describe(
-                'Lowest standard entrance fee as a dollar string (e.g. "35.00"), or null if the park is fee-free or lists no fee. Full fee/pass breakdown is in nps_get_park.',
+                'First entrance fee NPS lists as a dollar string (e.g. "35.00"), or null if unspecified. A published zero applies to this fee category. See nps_get_park for all fees and passes.',
               ),
+            entranceFeeTitle: z
+              .string()
+              .nullable()
+              .describe('Title of the same first entrance fee, or null if unspecified.'),
             url: z
               .string()
               .describe("Park's official NPS.gov page, with fuller detail than this summary."),
@@ -280,11 +284,11 @@ export const npsFindParks = tool('nps_find_parks', {
       );
       if (p.description) lines.push(escapeMarkdownInline(p.description));
       lines.push(formatActivities(p));
-      lines.push(
-        p.entranceFee
-          ? `**Entrance fee:** $${escapeMarkdownInline(p.entranceFee)}`
-          : '**Entrance fee:** Fee-free / see park page',
-      );
+      const fee =
+        p.entranceFee === null ? 'Unspecified' : `$${escapeMarkdownInline(p.entranceFee)}`;
+      const feeTitle =
+        p.entranceFeeTitle === null ? '' : ` · ${escapeMarkdownInline(p.entranceFeeTitle)}`;
+      lines.push(`**First entrance fee NPS lists:** ${fee}${feeTitle}`);
       if (p.latitude != null && p.longitude != null) {
         lines.push(`**Coordinates:** ${p.latitude}, ${p.longitude}`);
       }

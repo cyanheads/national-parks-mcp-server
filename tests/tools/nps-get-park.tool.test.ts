@@ -283,6 +283,77 @@ describe('nps_get_park', () => {
       operatingHours: [],
     };
 
+    it('preserves dated exceptions without baseline weekday data and respects fields projection', async () => {
+      upstream({
+        ...yose,
+        operatingHours: [
+          {
+            name: 'West Entrance',
+            exceptions: [
+              {
+                name: 'Fall Shoulder Season',
+                startDate: '2026-11-01',
+                endDate: '2026-12-14',
+                exceptionHours: { monday: 'Closed', tuesday: '9:00AM - 5:00PM' },
+              },
+              {
+                name: 'Spring [entry] *only*',
+                startDate: '2027-03-16',
+                endDate: '2027-04-20',
+                exceptionHours: {},
+              },
+            ],
+          },
+        ],
+      });
+      const result = await runToolContract(npsGetPark, { parkCode: ['yose'], fields: ['hours'] });
+      expect(result.structuredContent).toMatchObject({
+        parks: [
+          {
+            operatingHours: [
+              {
+                name: 'West Entrance',
+                standardHours: {
+                  monday: '',
+                  tuesday: '',
+                  wednesday: '',
+                  thursday: '',
+                  friday: '',
+                  saturday: '',
+                  sunday: '',
+                },
+                exceptions: [
+                  {
+                    name: 'Fall Shoulder Season',
+                    startDate: '2026-11-01',
+                    endDate: '2026-12-14',
+                    hours: { monday: 'Closed', tuesday: '9:00AM - 5:00PM', wednesday: '' },
+                  },
+                  {
+                    name: 'Spring [entry] *only*',
+                    startDate: '2027-03-16',
+                    endDate: '2027-04-20',
+                    hours: null,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+      const text = contentText(result);
+      expect(text).toContain('Fall Shoulder Season (2026-11-01 to 2026-12-14)');
+      expect(text).toContain('Mon Closed');
+      expect(text).toContain('Tue 9:00AM');
+      expect(text).toContain('Spring \\[entry\\] \\*only\\* (2027-03-16 to 2027-04-20)');
+      expect(text).toContain('Hours unknown');
+
+      const omitted = await runToolContract(npsGetPark, { parkCode: ['yose'], fields: [] });
+      expect(omitted.structuredContent).toMatchObject({ parks: [{ parkCode: 'yose' }] });
+      expect(omitted.structuredContent).not.toHaveProperty('parks.0.operatingHours');
+      expect(contentText(omitted)).not.toContain('Fall Shoulder Season');
+    });
+
     it('omits the directions pair on both surfaces when fields excludes directions', async () => {
       upstream(yose);
 

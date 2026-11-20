@@ -7,6 +7,7 @@
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import MarkdownIt from 'markdown-it';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { npsFindEvents } from '@/mcp-server/tools/definitions/nps-find-events.tool.js';
 import type { NpsEvent, NpsEventsResult } from '@/services/nps/types.js';
@@ -22,7 +23,7 @@ import { getNpsService } from '@/services/nps/nps-service.js';
 type ContractError = { code: number; message: string; data?: { reason?: string } };
 
 /** Text of every content block, joined — the surface content[]-reading clients see. */
-function contentText(result: { content: { type: string; text?: string }[] }): string {
+function contentText(result: Awaited<ReturnType<typeof runToolContract>>): string {
   return result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
 }
 
@@ -36,11 +37,14 @@ function makeEvent(overrides?: Partial<NpsEvent>): NpsEvent {
     dateStart: '2026-07-04',
     dateEnd: '2026-07-04',
     occurrenceDates: ['2026-07-04'],
+    cancelledDates: [],
     isRecurring: false,
     times: [{ timeStart: '02:00 PM', timeEnd: '02:30 PM' }],
     category: 'Ranger Programs',
     isFree: true,
     feeInfo: null,
+    registrationRequired: null,
+    registrationInfo: null,
     registrationUrl: null,
     infoUrl: 'https://www.nps.gov/yell/event',
     ...overrides,
@@ -117,7 +121,7 @@ describe('nps_find_events', () => {
     const notice = (result.structuredContent as { notice?: string }).notice ?? '';
     expect(notice).toContain('NPS reported: Date range too large.');
     expect(notice).not.toMatch(/upstream|sparser|feed/i);
-    expect(contentText(result as never)).toContain('NPS reported: Date range too large.');
+    expect(contentText(result)).toContain('NPS reported: Date range too large.');
   });
 
   it('handles a sparse event (null dates, null parkCode, no times)', async () => {
@@ -134,7 +138,7 @@ describe('nps_find_events', () => {
     expect(result.events[0]!.times).toEqual([]);
   });
 
-  it('format() renders the id, when-line, and fee', () => {
+  it('format() renders the ID, listed times, and fee', () => {
     const blocks = npsFindEvents.format!({ events: [makeEvent()] });
     const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('');
     expect(text).toContain('e1');
@@ -267,6 +271,120 @@ describe('nps_find_events', () => {
     expect(text).toContain('2026-08-08');
   });
 
+  it('keeps the series anchor and page recovery on both surfaces', async () => {
+    findEvents.mockResolvedValueOnce(
+      makeResult({
+        data: [makeEvent({ isRecurring: true, occurrenceDates: [], dateStart: '2026-05-24' })],
+      }),
+    );
+    const first = await runToolContract(npsFindEvents, {
+      parkCode: 'yell',
+      dateStart: '2026-08-01',
+    });
+    expect(first.structuredContent).toMatchObject({
+      events: [{ dateStart: '2026-05-24', occurrenceDates: [], isRecurring: true }],
+      totalCount: 1,
+    });
+    expect(contentText(first)).toContain('**Series anchor:** 2026-05-24–2026-07-04');
+    expect(contentText(first)).toContain('**Scheduled dates:** None listed');
+
+    findEvents.mockResolvedValueOnce(makeResult({ data: [] }));
+    const next = await runToolContract(npsFindEvents, { parkCode: 'yell', pageNumber: 2 });
+    expect(next.structuredContent).toMatchObject({
+      events: [],
+      totalCount: 1,
+      notice: expect.stringContaining('is past the end'),
+    });
+    expect(contentText(next)).toContain('Re-request with pageNumber=1');
+  });
+
+  it.each([true, false])(
+    'shows cancellations with no occurrences (recurring=%s)',
+    async (isRecurring) => {
+      findEvents.mockResolvedValueOnce(
+        makeResult({
+          data: [makeEvent({ isRecurring, occurrenceDates: [], cancelledDates: ['2026-08-01'] })],
+        }),
+      );
+      const result = await runToolContract(npsFindEvents, {
+        parkCode: 'yell',
+        dateStart: '2026-08-01',
+        dateEnd: '2026-08-01',
+      });
+      expect(result.structuredContent).toMatchObject({
+        events: [
+          {
+            dateStart: '2026-07-04',
+            occurrenceDates: [],
+            cancelledDates: ['2026-08-01'],
+            isRecurring,
+          },
+        ],
+        totalCount: 1,
+      });
+      expect(contentText(result)).toContain('**Cancelled dates:** 2026-08-01');
+    },
+  );
+
+  it('shows a one-off scheduled date separately from its record dates', async () => {
+    findEvents.mockResolvedValueOnce(
+      makeResult({ data: [makeEvent({ occurrenceDates: ['2026-07-06'] })] }),
+    );
+    const result = await runToolContract(npsFindEvents, {
+      parkCode: 'yell',
+      dateStart: '2026-07-06',
+    });
+    expect(result.structuredContent).toMatchObject({
+      events: [{ dateStart: '2026-07-04', occurrenceDates: ['2026-07-06'], isRecurring: false }],
+    });
+    const text = contentText(result);
+    expect(text).toContain('**Record dates:** 2026-07-04');
+    expect(text).toContain('**Scheduled dates:** 2026-07-06');
+  });
+
+  it('labels a cancelled one-off record date without presenting it as a scheduled date', async () => {
+    findEvents.mockResolvedValueOnce(
+      makeResult({ data: [makeEvent({ occurrenceDates: [], cancelledDates: ['2026-07-04'] })] }),
+    );
+    const result = await runToolContract(npsFindEvents, { parkCode: 'yell' });
+    expect(result.structuredContent).toMatchObject({
+      events: [{ dateStart: '2026-07-04', occurrenceDates: [], cancelledDates: ['2026-07-04'] }],
+    });
+    const text = contentText(result);
+    expect(text).toContain('**Record dates:** 2026-07-04');
+    expect(text).toContain('**Scheduled dates:** None listed');
+    expect(text).toContain('**Cancelled dates:** 2026-07-04');
+    expect(text).not.toContain('**When:**');
+  });
+
+  it.each([
+    { required: true, label: 'Yes', url: null },
+    { required: false, label: 'No', url: 'https://www.nps.gov/yell/register' },
+    { required: null, label: 'Unspecified', url: null },
+  ])(
+    'preserves registration details when the requirement is $required',
+    async ({ required, label, url }) => {
+      const registrationInfo = 'Get *same-day* [tickets](https://example.org/forged).';
+      findEvents.mockResolvedValueOnce(
+        makeResult({
+          data: [
+            makeEvent({ registrationRequired: required, registrationInfo, registrationUrl: url }),
+          ],
+        }),
+      );
+      const result = await runToolContract(npsFindEvents, { parkCode: 'yell' });
+      expect(result.structuredContent).toMatchObject({
+        events: [{ registrationRequired: required, registrationInfo, registrationUrl: url }],
+      });
+      const text = contentText(result);
+      expect(text).toContain(`**Registration required:** ${label}`);
+      const html = new MarkdownIt('commonmark').render(text);
+      expect(html).toContain(registrationInfo);
+      expect(html).not.toContain('href="https://example.org/forged"');
+      if (url) expect(html).toContain(`<a href="${url}">Register</a>`);
+    },
+  );
+
   /* ----------------------------------------------------------------------- *
    * #12 — a date in the wrong shape gets invalid_date and its declared
    * recovery, the same answer as an impossible calendar date, instead of the
@@ -290,7 +408,7 @@ describe('nps_find_events', () => {
       expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
       expect(error.data?.reason).toBe('invalid_date');
       expect(error.message).toBe(`${field} "${value}" is not in YYYY-MM-DD format.`);
-      expect(contentText(result as never)).toMatch(
+      expect(contentText(result)).toMatch(
         /^Recovery: Provide dates as real YYYY-MM-DD calendar dates/m,
       );
       expect(findEvents).not.toHaveBeenCalled();
@@ -308,7 +426,7 @@ describe('nps_find_events', () => {
       const error = (result.structuredContent as { error: ContractError }).error;
       expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
       expect(error.data?.reason).toBe('invalid_date');
-      expect(contentText(result as never)).toMatch(/^Recovery: /m);
+      expect(contentText(result)).toMatch(/^Recovery: /m);
       expect(findEvents).not.toHaveBeenCalled();
     });
 
@@ -375,7 +493,7 @@ describe('nps_find_events', () => {
         appliedFilters: 'parkCode=yell, dates=upcoming',
         notice: expect.stringContaining(`pageNumber=${next}`),
       });
-      const text = contentText(result as never);
+      const text = contentText(result);
       expect(text).toContain('**Truncated:** true');
       expect(text).toContain('**3 total**');
       expect(text).toContain('**Shown:** 1');
@@ -397,7 +515,7 @@ describe('nps_find_events', () => {
       expect('cap' in sc).toBe(false);
       expect('notice' in sc).toBe(false);
       expect(sc.totalCount).toBe(total);
-      const text = contentText(result as never);
+      const text = contentText(result);
       expect(text).not.toMatch(/truncated/i);
       expect(text).toContain(`**${total} total**`);
     });

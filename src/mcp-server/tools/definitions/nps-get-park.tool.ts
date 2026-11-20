@@ -8,6 +8,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
+import { operatingHours, renderOperatingHours } from '@/mcp-server/tools/operating-hours.js';
 import { getNpsService } from '@/services/nps/nps-service.js';
 
 export const npsGetPark = tool('nps_get_park', {
@@ -110,30 +111,7 @@ export const npsGetPark = tool('nps_get_park', {
               .describe(
                 'Annual/park-specific passes (included unless fields excludes "fees"). May be empty.',
               ),
-            operatingHours: z
-              .array(
-                z
-                  .object({
-                    name: z.string().describe('Schedule name (e.g. "Yosemite Valley").'),
-                    description: z.string().describe('Free-text hours/seasonality notes.'),
-                    standardHours: z
-                      .object({
-                        monday: z
-                          .string()
-                          .describe('Monday hours (e.g. "All Day", "Closed", "9:00AM - 5:00PM").'),
-                        tuesday: z.string().describe('Tuesday hours.'),
-                        wednesday: z.string().describe('Wednesday hours.'),
-                        thursday: z.string().describe('Thursday hours.'),
-                        friday: z.string().describe('Friday hours.'),
-                        saturday: z.string().describe('Saturday hours.'),
-                        sunday: z.string().describe('Sunday hours.'),
-                      })
-                      .describe(
-                        'Per-weekday operating hours. Values are free-text strings from NPS.',
-                      ),
-                  })
-                  .describe('Operating hours for one area or season.'),
-              )
+            operatingHours: operatingHours
               .optional()
               .describe(
                 'Operating hours by area/season (included unless fields excludes "hours"). May be empty.',
@@ -278,7 +256,7 @@ export const npsGetPark = tool('nps_get_park', {
         lines.push('', `**Activities:** ${escapeMarkdownInline(p.activities.join(', '))}`);
       if (p.topics?.length) lines.push(`**Topics:** ${escapeMarkdownInline(p.topics.join(', '))}`);
       renderFees(lines, p);
-      renderHours(lines, p);
+      if (p.operatingHours) renderOperatingHours(lines, p.operatingHours);
       renderContacts(lines, p);
       if (p.directionsInfo)
         lines.push('', `**Directions:** ${escapeMarkdownInline(p.directionsInfo)}`);
@@ -327,18 +305,6 @@ function renderFees(lines: string[], p: ParkDetailItem): void {
       lines.push(
         `- ${escapeMarkdownInline(f.title)}: $${escapeMarkdownInline(f.cost)} — ${escapeMarkdownInline(f.description)}`,
       );
-  }
-}
-
-function renderHours(lines: string[], p: ParkDetailItem): void {
-  if (!p.operatingHours || p.operatingHours.length === 0) return;
-  lines.push('', '**Operating hours:**');
-  for (const h of p.operatingHours) {
-    lines.push(`- **${escapeMarkdownInline(h.name)}:** ${escapeMarkdownInline(h.description)}`);
-    const sh = h.standardHours;
-    lines.push(
-      `  Mon ${escapeMarkdownInline(sh.monday)} · Tue ${escapeMarkdownInline(sh.tuesday)} · Wed ${escapeMarkdownInline(sh.wednesday)} · Thu ${escapeMarkdownInline(sh.thursday)} · Fri ${escapeMarkdownInline(sh.friday)} · Sat ${escapeMarkdownInline(sh.saturday)} · Sun ${escapeMarkdownInline(sh.sunday)}`,
-    );
   }
 }
 

@@ -64,6 +64,33 @@ describe('NpsService', () => {
   });
 
   describe('findParks', () => {
+    it('keeps the first entrance fee and its literal category, including title-only and zero fees', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            {
+              entranceFees: [
+                { cost: '35.00', title: 'Vehicle [7 days]' },
+                { cost: '20.00', title: 'Person' },
+              ],
+            },
+            { entranceFees: [{ title: 'Educational group' }, { cost: '1.00', title: 'Vehicle' }] },
+            { entranceFees: [{ cost: '0.00', title: 'Education' }] },
+            {},
+          ],
+        }),
+      );
+      const result = await service.findParks({ limit: 4 }, ctx);
+      expect(
+        result.data.map(({ entranceFee, entranceFeeTitle }) => [entranceFee, entranceFeeTitle]),
+      ).toEqual([
+        ['35.00', 'Vehicle [7 days]'],
+        [null, 'Educational group'],
+        ['0.00', 'Education'],
+        [null, null],
+      ]);
+    });
+
     it('coerces string lat/lng to floats, extracts activity names, derives entranceFee', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({
@@ -129,6 +156,70 @@ describe('NpsService', () => {
   });
 
   describe('getParks', () => {
+    it('preserves each dated exception alongside standard hours and honors fields', async () => {
+      const body = okResponse({
+        data: [
+          {
+            operatingHours: [
+              {
+                name: 'West Entrance',
+                standardHours: { monday: 'All Day' },
+                exceptions: [
+                  {
+                    name: 'Fall Shoulder Season',
+                    startDate: '2026-11-01',
+                    endDate: '2026-12-14',
+                    exceptionHours: { monday: 'Closed', tuesday: '8:00 AM–4:30 PM' },
+                  },
+                  {
+                    name: 'Winter Closure',
+                    startDate: '2026-12-15',
+                    exceptionHours: { monday: '  ' },
+                  },
+                ],
+              },
+              { name: 'East Entrance', exceptions: [{ endDate: '2027-04-20' }] },
+            ],
+          },
+        ],
+      });
+      mockFetch.mockResolvedValue(body);
+      const [park] = await service.getParks(['yell'], ['hours'], ctx);
+      const blank = {
+        monday: '',
+        tuesday: '',
+        wednesday: '',
+        thursday: '',
+        friday: '',
+        saturday: '',
+        sunday: '',
+      };
+      expect(park?.operatingHours).toEqual([
+        {
+          name: 'West Entrance',
+          description: '',
+          standardHours: { ...blank, monday: 'All Day' },
+          exceptions: [
+            {
+              name: 'Fall Shoulder Season',
+              startDate: '2026-11-01',
+              endDate: '2026-12-14',
+              hours: { ...blank, monday: 'Closed', tuesday: '8:00 AM–4:30 PM' },
+            },
+            { name: 'Winter Closure', startDate: '2026-12-15', endDate: '', hours: null },
+          ],
+        },
+        {
+          name: 'East Entrance',
+          description: '',
+          standardHours: blank,
+          exceptions: [{ name: '', startDate: '', endDate: '2027-04-20', hours: null }],
+        },
+      ]);
+      const [filtered] = await service.getParks(['yell'], ['fees'], ctx);
+      expect(filtered).not.toHaveProperty('operatingHours');
+    });
+
     it('extracts topics/activities names, coerces detail, caps images at 5 and flags the cap, honors fields', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({
@@ -385,6 +476,114 @@ describe('NpsService', () => {
   });
 
   describe('findCampgrounds', () => {
+    it('pairs the first campground fee with its category, including a title-only fee', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            {
+              fees: [
+                { cost: '30.00', title: 'Family [Site]' },
+                { cost: '6.00', title: 'Hiker/Biker' },
+              ],
+            },
+            { fees: [{ title: 'Winter' }] },
+            { fees: [{ cost: '0.00', title: 'Primitive' }] },
+          ],
+        }),
+      );
+      const { data } = await service.findCampgrounds({ parkCode: 'grca', limit: 3 }, ctx);
+      expect(data.map(({ fee, feeTitle }) => [fee, feeTitle])).toEqual([
+        ['30.00', 'Family [Site]'],
+        [null, 'Winter'],
+        ['0.00', 'Primitive'],
+      ]);
+    });
+
+    it('retains campground schedules, independent inventory counts, and only positive length limits', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            {
+              campsites: {
+                electricalHookups: '92',
+                tentOnly: '18',
+                rvOnly: '6',
+                group: '6',
+                walkBoatTo: '0',
+                horse: '',
+              },
+              accessibility: { rvAllowed: '1', rvMaxLength: '40', trailerMaxLength: '26' },
+              operatingHours: [
+                {
+                  name: 'Primitive season',
+                  exceptions: [
+                    {
+                      name: 'Seasonal access',
+                      startDate: '2026-10-01',
+                      exceptionHours: { monday: 'All Day' },
+                    },
+                    {
+                      name: 'Winter Closure',
+                      startDate: '2026-11-01',
+                      endDate: '2027-05-19',
+                      exceptionHours: {},
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              campsites: { electricalHookups: '0' },
+              accessibility: { rvAllowed: '1', rvMaxLength: '0', trailerMaxLength: ' ' },
+            },
+            { campsites: { electricalHookups: ' ' } },
+            {},
+          ],
+        }),
+      );
+      const { data } = await service.findCampgrounds({ parkCode: 'grca', limit: 4 }, ctx);
+      expect(data[0]).toMatchObject({
+        electricalHookupSites: 92,
+        rvMaxLengthFt: 40,
+        trailerMaxLengthFt: 26,
+        siteTypes: { tentOnly: 18, rvOnly: 6, group: 6, walkBoatTo: 0, horse: null },
+      });
+      expect(data[0]?.operatingHours[0]?.exceptions).toEqual([
+        {
+          name: 'Seasonal access',
+          startDate: '2026-10-01',
+          endDate: '',
+          hours: {
+            monday: 'All Day',
+            tuesday: '',
+            wednesday: '',
+            thursday: '',
+            friday: '',
+            saturday: '',
+            sunday: '',
+          },
+        },
+        { name: 'Winter Closure', startDate: '2026-11-01', endDate: '2027-05-19', hours: null },
+      ]);
+      expect(data[1]).toMatchObject({
+        electricalHookupSites: 0,
+        rvMaxLengthFt: null,
+        trailerMaxLengthFt: null,
+        amenities: { rvAllowed: true },
+        operatingHours: [],
+      });
+      for (const site of data.slice(2)) {
+        expect(site).toMatchObject({
+          electricalHookupSites: null,
+          rvMaxLengthFt: null,
+          trailerMaxLengthFt: null,
+          siteTypes: { tentOnly: null, rvOnly: null, group: null, walkBoatTo: null, horse: null },
+          amenities: { rvAllowed: null },
+          operatingHours: [],
+        });
+      }
+    });
+
     it('coerces nested totalSites, string site counts, array+string amenities, accessibility.adaInfo', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({
@@ -659,6 +858,63 @@ describe('NpsService', () => {
   });
 
   describe('getThingsToDo', () => {
+    it('prefers a related park that matches the requested park, including with a state filter', async () => {
+      const body = okResponse({
+        data: [
+          { relatedParks: [{ parkCode: 'goga' }, { parkCode: 'pore' }] },
+          { relatedParks: [{ parkCode: 'goga' }] },
+          {},
+        ],
+      });
+      mockFetch.mockResolvedValue(body);
+      for (const filters of [{ parkCode: 'pore' }, { parkCode: 'pore', stateCode: 'CA' }]) {
+        const { data } = await service.getThingsToDo({ ...filters, limit: 3 }, ctx);
+        expect(data.map((item) => item.parkCode)).toEqual(['pore', 'goga', null]);
+      }
+      const state = await service.getThingsToDo({ stateCode: 'CA', limit: 3 }, ctx);
+      expect(state.data.map((item) => item.parkCode)).toEqual(['goga', 'goga', null]);
+    });
+
+    it('keeps activity restrictions independent of permission and reservation flags', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            {
+              arePetsPermitted: 'false',
+              petsDescription: '<p>Leash &amp; trail rules.</p>',
+              reservationDescription: 'Permit required.\n\nCheck [rules] for ages < 12.',
+            },
+            {
+              arePetsPermitted: 'true',
+              isReservationRequired: 'true',
+              petsDescription: ' ',
+              reservationDescription: '<p> </p>',
+            },
+            {},
+          ],
+        }),
+      );
+      const { data } = await service.getThingsToDo({ parkCode: 'pore', limit: 3 }, ctx);
+      expect(data[0]).toMatchObject({
+        petsPermitted: false,
+        reservationRequired: false,
+        petsDescription: 'Leash & trail rules.',
+        reservationDescription: 'Permit required.\n\nCheck [rules] for ages < 12.',
+      });
+      expect(data[1]).toMatchObject({
+        petsPermitted: true,
+        reservationRequired: true,
+        petsDescription: null,
+        reservationDescription: null,
+      });
+      expect(data[2]).toMatchObject({
+        petsPermitted: false,
+        reservationRequired: false,
+        petsDescription: null,
+        reservationDescription: null,
+      });
+    });
+
     it('extracts parkCode from relatedParks, coerces boolean strings, strips HTML, picks duration', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({
@@ -744,6 +1000,108 @@ describe('NpsService', () => {
   });
 
   describe('findEvents', () => {
+    it('keeps scheduled dates on either side of a cancelled occurrence', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            {
+              dates: ['2026-12-03', '2026-12-04', '2026-12-05', '2026-12-08'],
+              cancelleddatelist: ['12/04/2026'],
+            },
+          ],
+        }),
+      );
+      const result = await service.findEvents(
+        { dateStart: '2026-12-03', dateEnd: '2026-12-05', pageNumber: 1, pageSize: 10 },
+        ctx,
+      );
+      expect(result.data[0]).toMatchObject({
+        occurrenceDates: ['2026-12-03', '2026-12-05'],
+        cancelledDates: ['2026-12-04'],
+      });
+    });
+
+    it.each([
+      { dateStart: '2026-12-04', dateEnd: '2026-12-04', expected: ['2026-12-04'] },
+      { dateStart: '2026-12-04', expected: ['2026-12-04', '2026-12-08'] },
+      { dateEnd: '2026-12-04', expected: ['2026-09-25', '2026-12-04'] },
+      { expected: ['2026-09-25', '2026-12-04', '2026-12-08'] },
+    ])(
+      'normalizes cancellations and clips them to the caller window ($dateStart / $dateEnd)',
+      async ({ expected, ...bounds }) => {
+        const cancelleddatelist = [
+          '09/25/2026',
+          '12/04/2026',
+          '12/08/2026',
+          '02/30/2026',
+          '13/01/2026',
+          'invalid',
+        ];
+        mockFetch.mockResolvedValueOnce(
+          okResponse({
+            total: '8',
+            data: [
+              {
+                isrecurring: 'true',
+                datestart: '2026-05-01',
+                dateend: '2026-05-02',
+                dates: ['2026-12-04'],
+                cancelleddatelist,
+              },
+              { cancelleddatelist },
+              {},
+            ],
+          }),
+        );
+        const result = await service.findEvents(
+          { ...bounds, parkCode: 'rori', pageNumber: 2, pageSize: 3 },
+          ctx,
+        );
+        expect(result.total).toBe(8);
+        expect(result.data).toHaveLength(3);
+        expect(result.data[0]).toMatchObject({
+          isRecurring: true,
+          dateStart: '2026-05-01',
+          dateEnd: '2026-05-02',
+          occurrenceDates: [],
+          cancelledDates: expected,
+        });
+        expect(result.data[1]).toMatchObject({ occurrenceDates: [], cancelledDates: expected });
+        expect(result.data[2]).toMatchObject({ occurrenceDates: [], cancelledDates: [] });
+        expect(mockFetch.mock.calls[0]?.[0]).toContain('pageNumber=2');
+      },
+    );
+
+    it('retains event registration details with true, false, blank and absent flags', async () => {
+      mockFetch.mockResolvedValueOnce(
+        okResponse({
+          data: [
+            { isregresrequired: 'true', regresinfo: '<p>Pick up your ticket.</p>', regresurl: '' },
+            {
+              isregresrequired: 'false',
+              regresinfo: 'Drop in.',
+              regresurl: 'https://www.nps.gov/',
+            },
+            { isregresrequired: '', regresinfo: 'Check ticket hours.\n\nAges < 12.' },
+            {},
+          ],
+        }),
+      );
+      const { data } = await service.findEvents({ pageNumber: 1, pageSize: 4 }, ctx);
+      expect(
+        data.map(({ registrationRequired, registrationInfo, registrationUrl }) => [
+          registrationRequired,
+          registrationInfo,
+          registrationUrl,
+        ]),
+      ).toEqual([
+        [true, 'Pick up your ticket.', null],
+        [false, 'Drop in.', 'https://www.nps.gov/'],
+        [null, 'Check ticket hours.\n\nAges < 12.', null],
+        [null, null, null],
+      ]);
+    });
+
     it('reads sitecode as parkCode, coerces isfree, strips HTML, normalizes the distinct envelope', async () => {
       mockFetch.mockResolvedValueOnce(
         okResponse({

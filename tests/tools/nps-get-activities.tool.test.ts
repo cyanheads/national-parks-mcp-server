@@ -7,6 +7,7 @@
 
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import MarkdownIt from 'markdown-it';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { npsGetActivities } from '@/mcp-server/tools/definitions/nps-get-activities.tool.js';
 import type { NpsThingToDo } from '@/services/nps/types.js';
@@ -22,7 +23,7 @@ import { getNpsService } from '@/services/nps/nps-service.js';
 type ContractError = { code: number; message: string; data?: { reason?: string } };
 
 /** Text of every content block, joined — the surface content[]-reading clients see. */
-function contentText(result: { content: { type: string; text?: string }[] }): string {
+function contentText(result: Awaited<ReturnType<typeof runToolContract>>): string {
   return result.content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
 }
 
@@ -37,8 +38,10 @@ function makeActivity(overrides?: Partial<NpsThingToDo>): NpsThingToDo {
     longitude: -68.22,
     duration: '1-3 Hours',
     reservationRequired: true,
+    reservationDescription: null,
     feeDescription: 'Vehicle reservation required.',
     petsPermitted: false,
+    petsDescription: null,
     accessibility: 'Paved summit path.',
     season: ['Summer', 'Fall'],
     url: 'https://www.nps.gov/thingstodo/sunrise',
@@ -94,6 +97,55 @@ describe('nps_get_activities', () => {
     expect(result.activities[0]!.duration).toBeNull();
   });
 
+  it('keeps an empty page distinct from a search with no matches', async () => {
+    getThingsToDo.mockResolvedValueOnce({ total: 1, data: [] });
+    const result = await runToolContract(npsGetActivities, { parkCode: 'acad', start: 1 });
+    expect(result.structuredContent).toMatchObject({
+      activities: [],
+      totalCount: 1,
+      notice: expect.stringContaining('is past the end'),
+    });
+    expect(contentText(result)).toContain('Re-request with start=0');
+  });
+
+  it('renders activity guidance independently of the flags and shows the selected park', async () => {
+    const petsDescription = 'Keep pets on a *short* leash.';
+    const reservationDescription = 'Check [permit terms](https://example.org/forged).';
+    getThingsToDo.mockResolvedValueOnce({
+      total: 1,
+      data: [
+        makeActivity({
+          parkCode: 'pore',
+          petsPermitted: false,
+          petsDescription,
+          reservationRequired: false,
+          reservationDescription,
+        }),
+      ],
+    });
+    const result = await runToolContract(npsGetActivities, { parkCode: 'pore', stateCode: 'CA' });
+    expect(getThingsToDo).toHaveBeenCalledWith(
+      expect.objectContaining({ parkCode: 'pore', stateCode: 'CA' }),
+      expect.anything(),
+    );
+    expect(result.structuredContent).toMatchObject({
+      activities: [
+        {
+          parkCode: 'pore',
+          petsPermitted: false,
+          petsDescription,
+          reservationRequired: false,
+          reservationDescription,
+        },
+      ],
+    });
+    const html = new MarkdownIt('commonmark').render(contentText(result));
+    expect(html).toContain('<strong>Park:</strong> pore');
+    expect(html).toContain(petsDescription);
+    expect(html).toContain(reservationDescription);
+    expect(html).not.toContain('href="https://example.org/forged"');
+  });
+
   it('format() renders the id and reservation/pets flags (incl. negatives)', () => {
     const blocks = npsGetActivities.format!({
       activities: [makeActivity({ reservationRequired: false, petsPermitted: false })],
@@ -122,7 +174,7 @@ describe('nps_get_activities', () => {
       expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
       expect(error.data?.reason).toBe('invalid_park_code');
       expect(error.message).toContain(args.parkCode);
-      const text = contentText(result as never);
+      const text = contentText(result);
       expect(text).toMatch(/^Recovery: .*nps_find_parks/m);
       expect(text).not.toMatch(/comma-separated/);
       expect(getThingsToDo).not.toHaveBeenCalled();
@@ -136,7 +188,7 @@ describe('nps_get_activities', () => {
       expect(error.code).toBe(JsonRpcErrorCode.ValidationError);
       expect(error.data?.reason).toBe('invalid_state_code');
       expect(error.message).toContain('"Cal"');
-      const text = contentText(result as never);
+      const text = contentText(result);
       expect(text).toMatch(/^Recovery: .*two-letter/m);
       expect(text).not.toMatch(/comma-separated/);
       expect(getThingsToDo).not.toHaveBeenCalled();
@@ -207,7 +259,7 @@ describe('nps_get_activities', () => {
         appliedFilters: 'parkCode=acad',
         notice: expect.stringContaining('start=2'),
       });
-      const text = contentText(result as never);
+      const text = contentText(result);
       expect(text).toContain('**Truncated:** true');
       expect(text).toContain('**89 total**');
       expect(text).toContain('**Shown:** 2');
@@ -226,7 +278,7 @@ describe('nps_get_activities', () => {
       expect('cap' in sc).toBe(false);
       expect('notice' in sc).toBe(false);
       expect(sc.totalCount).toBe(1);
-      const text = contentText(result as never);
+      const text = contentText(result);
       expect(text).not.toMatch(/truncated/i);
       expect(text).toContain('**1 total**');
     });

@@ -9,13 +9,14 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
+import { operatingHours, renderOperatingHours } from '@/mcp-server/tools/operating-hours.js';
 import { getNpsService } from '@/services/nps/nps-service.js';
 import type { NpsCampground } from '@/services/nps/types.js';
 
 export const npsFindCampgrounds = tool('nps_find_campgrounds', {
   title: 'national-parks-mcp-server: find campgrounds',
   description:
-    'Campgrounds at a park or across a state: amenities (potable water, showers, RV dump station, toilets, trash collection, RV access), reservable vs. first-come-first-served site counts, reservation guidance and booking URL, accessibility, and fees. Check the linked campground page for RV hookups and date-specific availability. Get park codes from nps_find_parks. Some parks list lodging or backcountry permits instead of NPS-managed campgrounds; an empty result is not an error.',
+    'Campgrounds at a park or across a state: operating schedules and dated exceptions, site counts and electrical hookup inventory, amenities and RV access, RV and trailer length limits, accessibility, fees, and reservation guidance. Use the booking page to check date-specific availability. Get park codes from nps_find_parks. Some parks list lodging or backcountry permits instead of NPS-managed campgrounds; an empty result is not an error.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   input: z.object({
     parkCode: z
@@ -70,6 +71,40 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
               .number()
               .nullable()
               .describe('Number of first-come-first-served sites, or null.'),
+            electricalHookupSites: z
+              .number()
+              .nullable()
+              .describe(
+                'Sites with electrical hookups in the campground inventory, or null if unspecified. Check the booking page for availability.',
+              ),
+            siteTypes: z
+              .object({
+                tentOnly: z
+                  .number()
+                  .nullable()
+                  .describe('Tent-only sites, or null if unspecified.'),
+                rvOnly: z.number().nullable().describe('RV-only sites, or null if unspecified.'),
+                group: z.number().nullable().describe('Group sites, or null if unspecified.'),
+                walkBoatTo: z
+                  .number()
+                  .nullable()
+                  .describe('Walk-to or boat-to sites, or null if unspecified.'),
+                horse: z.number().nullable().describe('Horse sites, or null if unspecified.'),
+              })
+              .describe('Published site counts by category. Categories may overlap.'),
+            rvMaxLengthFt: z
+              .number()
+              .nullable()
+              .describe(
+                'Maximum RV length in feet, or null if unspecified. RV permission is reported separately.',
+              ),
+            trailerMaxLengthFt: z
+              .number()
+              .nullable()
+              .describe('Maximum trailer length in feet, or null if unspecified.'),
+            operatingHours: operatingHours.describe(
+              'Published campground operating schedules, including dated exceptions. May be empty.',
+            ),
             reservationInfo: z
               .string()
               .nullable()
@@ -82,8 +117,12 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
               .string()
               .nullable()
               .describe(
-                'Lowest campground fee as a dollar string (e.g. "30.00"), or null if free / unspecified.',
+                'First campground fee NPS lists as a dollar string (e.g. "30.00"), or null if unspecified. A published zero applies to this fee category.',
               ),
+            feeTitle: z
+              .string()
+              .nullable()
+              .describe('Title of the same first fee, or null if unspecified.'),
             amenities: z
               .object({
                 potableWater: z
@@ -264,7 +303,15 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
       );
       if (c.description) lines.push(escapeMarkdownInline(c.description));
       lines.push(`**Amenities:** ${amenityLine(c)}`);
-      if (c.fee) lines.push(`**Fee:** $${escapeMarkdownInline(c.fee)}`);
+      lines.push(
+        `**Electrical hookup sites:** ${siteCount(c.electricalHookupSites)}`,
+        `**Site types:** Tent-only: ${siteCount(c.siteTypes.tentOnly)} · RV-only: ${siteCount(c.siteTypes.rvOnly)} · Group: ${siteCount(c.siteTypes.group)} · Walk/boat-to: ${siteCount(c.siteTypes.walkBoatTo)} · Horse: ${siteCount(c.siteTypes.horse)}`,
+        `**RV max length:** ${c.rvMaxLengthFt === null ? 'Unspecified' : `${c.rvMaxLengthFt} ft`}`,
+        `**Trailer max length:** ${c.trailerMaxLengthFt === null ? 'Unspecified' : `${c.trailerMaxLengthFt} ft`}`,
+      );
+      const fee = c.fee === null ? 'Unspecified' : `$${escapeMarkdownInline(c.fee)}`;
+      const feeTitle = c.feeTitle === null ? '' : ` · ${escapeMarkdownInline(c.feeTitle)}`;
+      lines.push(`**First campground fee NPS lists:** ${fee}${feeTitle}`);
       if (c.reservationInfo)
         lines.push(`**Reservations:** ${escapeMarkdownInline(c.reservationInfo)}`);
       if (c.reservationUrl) lines.push(markdownLink('Book', c.reservationUrl));
@@ -274,17 +321,20 @@ export const npsFindCampgrounds = tool('nps_find_campgrounds', {
         lines.push(`**Coordinates:** ${c.latitude}, ${c.longitude}`);
       }
       if (c.url) lines.push(markdownLink('Campground page', c.url));
+      renderOperatingHours(lines, c.operatingHours);
       lines.push('');
     }
     return [{ type: 'text', text: lines.join('\n').trimEnd() }];
   },
 });
 
-/** A count NPS published no value for reads unknown, never 0 — the same null
- * `structuredContent` carries. */
 function siteSummary(c: NpsCampground): string {
-  const count = (n: number | null) => (n === null ? 'unknown' : String(n));
-  return `${count(c.totalSites)} (${count(c.reservableSites)} reservable, ${count(c.firstComeSites)} first-come)`;
+  return `${siteCount(c.totalSites)} (${siteCount(c.reservableSites)} reservable, ${siteCount(c.firstComeSites)} first-come)`;
+}
+
+/** A null count means NPS published no value. */
+function siteCount(value: number | null): string {
+  return value === null ? 'unknown' : String(value);
 }
 
 /** Explicit Yes/No per amenity — a camper filtering on "no RV" needs the No, too.
